@@ -47,9 +47,41 @@ class JSONFormatter(logging.Formatter):
             "line": record.lineno,
         }
 
-        # Add extra fields if present
-        if hasattr(record, 'extra') and record.extra:
-            log_entry["extra"] = record.extra
+        # Add extra fields - they are added as attributes directly to the record
+        # Standard logging record attributes to skip
+        skip_attrs = {
+            "name",
+            "msg",
+            "args",
+            "levelname",
+            "levelno",
+            "pathname",
+            "filename",
+            "module",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "created",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "message",
+            "asctime",
+            "extra",
+        }
+
+        extra_fields = {}
+        for key, value in record.__dict__.items():
+            if key not in skip_attrs:
+                extra_fields[key] = value
+
+        if extra_fields:
+            log_entry["extra"] = extra_fields
 
         # Add exception info if present
         if record.exc_info:
@@ -62,11 +94,11 @@ class ColoredConsoleFormatter(logging.Formatter):
     """Colored console output for readability."""
 
     LEVEL_COLORS = {
-        'DEBUG': Colors.GRAY,
-        'INFO': Colors.GREEN,
-        'WARNING': Colors.YELLOW,
-        'ERROR': Colors.RED,
-        'CRITICAL': Colors.RED,
+        "DEBUG": Colors.GRAY,
+        "INFO": Colors.GREEN,
+        "WARNING": Colors.YELLOW,
+        "ERROR": Colors.RED,
+        "CRITICAL": Colors.RED,
     }
 
     def __init__(self, agent_name: str):
@@ -102,7 +134,7 @@ def get_logger(agent_name: str, log_level: str = "DEBUG") -> logging.Logger:
         Configured logger instance
     """
     # Sanitize agent name for file
-    safe_name = agent_name.lower().replace(' ', '_').replace('-', '_')
+    safe_name = agent_name.lower().replace(" ", "_").replace("-", "_")
     log_file = LOG_DIR / f"{safe_name}.log"
 
     # Create or get logger
@@ -119,7 +151,7 @@ def get_logger(agent_name: str, log_level: str = "DEBUG") -> logging.Logger:
         str(log_file),
         maxBytes=10 * 1024 * 1024,  # 10 MB
         backupCount=5,
-        encoding='utf-8'
+        encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(JSONFormatter(agent_name))
@@ -167,7 +199,7 @@ def log_a2a_message(
     from_agent: str,
     to_agent: str,
     message: Dict[str, Any],
-    duration_ms: Optional[float] = None
+    duration_ms: Optional[float] = None,
 ):
     """Log an A2A protocol message."""
     arrow = "→" if direction == "SENT" else "←"
@@ -181,8 +213,8 @@ def log_a2a_message(
             "message_id": message.get("id"),
             "method": message.get("method"),
             "duration_ms": duration_ms,
-            "payload_size": len(json.dumps(message))
-        }
+            "payload_size": len(json.dumps(message)),
+        },
     )
 
 
@@ -191,7 +223,7 @@ def log_mandate_event(
     event: str,  # "CREATED", "SIGNED", "VERIFIED", "EXPIRED"
     mandate_type: str,
     mandate_id: str,
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None,
 ):
     """Log a mandate lifecycle event."""
     logger.info(
@@ -201,8 +233,8 @@ def log_mandate_event(
             "event": event,
             "mandate_type": mandate_type,
             "mandate_id": mandate_id,
-            **(details or {})
-        }
+            **(details or {}),
+        },
     )
 
 
@@ -213,7 +245,7 @@ def log_llm_call(
     response_preview: str,
     duration_seconds: float,
     tokens_in: Optional[int] = None,
-    tokens_out: Optional[int] = None
+    tokens_out: Optional[int] = None,
 ):
     """Log an LLM (Ollama) call."""
     logger.info(
@@ -221,12 +253,16 @@ def log_llm_call(
         extra={
             "type": "llm_call",
             "model": model,
-            "prompt_preview": prompt_preview[:200] + "..." if len(prompt_preview) > 200 else prompt_preview,
-            "response_preview": response_preview[:200] + "..." if len(response_preview) > 200 else response_preview,
+            "prompt_preview": prompt_preview[:200] + "..."
+            if len(prompt_preview) > 200
+            else prompt_preview,
+            "response_preview": response_preview[:200] + "..."
+            if len(response_preview) > 200
+            else response_preview,
             "duration_seconds": duration_seconds,
             "tokens_in": tokens_in,
-            "tokens_out": tokens_out
-        }
+            "tokens_out": tokens_out,
+        },
     )
 
 
@@ -236,7 +272,7 @@ def log_payment_event(
     transaction_id: str,
     amount: float,
     currency: str = "USD",
-    details: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None,
 ):
     """Log a payment processing event."""
     logger.info(
@@ -247,6 +283,6 @@ def log_payment_event(
             "transaction_id": transaction_id,
             "amount": amount,
             "currency": currency,
-            **(details or {})
-        }
+            **(details or {}),
+        },
     )

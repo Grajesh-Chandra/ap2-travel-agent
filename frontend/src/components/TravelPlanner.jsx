@@ -294,12 +294,16 @@ function ConversationResponse({ data, onSuggestionClick }) {
     <div className="max-w-[90%]">
       <div className="glass-elevated rounded-2xl rounded-tl-sm px-5 py-5">
         {/* Message with markdown-like formatting */}
-        <div className="text-gray-200 leading-relaxed mb-5">
-          {data.message.split('\n').map((line, i) => {
+        <div className="text-gray-200 leading-relaxed mb-5 whitespace-pre-wrap">
+          {data.message?.split('\n').map((line, i) => {
             // Bold text between **
             const parts = line.split(/(\*\*.*?\*\*)/g)
+            const isEmpty = line.trim() === ''
             return (
-              <p key={i} className={`${line.startsWith('-') ? 'ml-4 before:content-["•"] before:mr-2 before:text-gold' : ''} ${i > 0 ? 'mt-2' : ''}`}>
+              <p 
+                key={i} 
+                className={`${line.startsWith('-') ? 'ml-4 before:content-["•"] before:mr-2 before:text-gold' : ''} ${i > 0 && !isEmpty ? 'mt-2' : ''} ${isEmpty ? 'h-2' : ''}`}
+              >
                 {parts.map((part, j) =>
                   part.startsWith('**') && part.endsWith('**') ? (
                     <strong key={j} className="text-white font-semibold">
@@ -560,11 +564,15 @@ function CheckoutResponse({ data, onSuggestionClick }) {
         </div>
 
         {/* Message */}
-        <div className="text-gray-200 leading-relaxed mb-5">
+        <div className="text-gray-200 leading-relaxed mb-5 whitespace-pre-wrap">
           {data.message?.split('\n').map((line, i) => {
             const parts = line.split(/(\*\*.*?\*\*)/g)
+            const isEmpty = line.trim() === ''
             return (
-              <p key={i} className={`${line.startsWith('-') ? 'ml-4 before:content-["•"] before:mr-2 before:text-gold' : ''} ${i > 0 ? 'mt-2' : ''}`}>
+              <p 
+                key={i} 
+                className={`${line.startsWith('-') ? 'ml-4 before:content-["•"] before:mr-2 before:text-gold' : ''} ${i > 0 && !isEmpty ? 'mt-2' : ''} ${isEmpty ? 'h-2' : ''}`}
+              >
                 {parts.map((part, j) =>
                   part.startsWith('**') && part.endsWith('**') ? (
                     <strong key={j} className="text-white font-semibold">
@@ -666,8 +674,10 @@ function PaymentCompleteResponse({ data }) {
         {/* Message */}
         <div className="relative text-center mb-8">
           <h3 className="text-2xl font-bold text-white mb-3">Booking Confirmed!</h3>
-          <p className="text-gray-300 leading-relaxed max-w-md mx-auto">
+          <p className="text-gray-300 leading-relaxed max-w-md mx-auto whitespace-pre-wrap">
             {data.message?.split('\n').map((line, i) => {
+              const isEmpty = line.trim() === ''
+              if (isEmpty) return <span key={i} className="block h-2" />
               if (line.includes('`')) {
                 // Handle code/monospace text
                 const parts = line.split(/(`[^`]+`)/g)

@@ -22,11 +22,7 @@ class A2AClient:
     """
 
     def __init__(
-        self,
-        agent_name: str,
-        agent_url: str,
-        timeout: float = 30.0,
-        logger=None
+        self, agent_name: str, agent_url: str, timeout: float = 30.0, logger=None
     ):
         self.agent_name = agent_name
         self.agent_url = agent_url
@@ -40,7 +36,7 @@ class A2AClient:
         text: Optional[str] = None,
         data: Optional[Dict[str, Any]] = None,
         include_ap2: bool = True,
-        extra_parts: Optional[list] = None
+        extra_parts: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
         Send an A2A message to another agent.
@@ -73,17 +69,14 @@ class A2AClient:
             "jsonrpc": "2.0",
             "method": "message/send",
             "params": {
-                "configuration": {
-                    "acceptedOutputModes": [],
-                    "blocking": True
-                },
+                "configuration": {"acceptedOutputModes": [], "blocking": True},
                 "message": {
                     "kind": "message",
                     "messageId": message_id,
                     "role": "agent",
-                    "parts": parts
-                }
-            }
+                    "parts": parts,
+                },
+            },
         }
 
         # Build headers
@@ -120,15 +113,14 @@ class A2AClient:
                     "to_agent": target_agent,
                     "method": "message/send",
                     "message_id": message_id,
-                    "target_url": target_url
-                }
+                    "target_url": target_url,
+                    "payload": request_body,
+                },
             )
 
         try:
             response = await self.client.post(
-                target_url,
-                json=request_body,
-                headers=headers
+                target_url, json=request_body, headers=headers
             )
             response.raise_for_status()
 
@@ -146,8 +138,8 @@ class A2AClient:
                         "method": "message/send_response",
                         "message_id": message_id,
                         "duration_ms": round(duration_ms, 2),
-                        "payload_size": len(json.dumps(request_body))
-                    }
+                        "payload": result,
+                    },
                 )
 
             return result
@@ -160,8 +152,8 @@ class A2AClient:
                         "type": "a2a_error",
                         "target_url": target_url,
                         "status_code": e.response.status_code,
-                        "error": str(e)
-                    }
+                        "error": str(e),
+                    },
                 )
             raise
 
@@ -172,8 +164,8 @@ class A2AClient:
                     extra={
                         "type": "a2a_error",
                         "target_url": target_url,
-                        "error": str(e)
-                    }
+                        "error": str(e),
+                    },
                 )
             raise
 
@@ -181,13 +173,13 @@ class A2AClient:
         self,
         target_url: str,
         intent_mandate: Dict[str, Any],
-        risk_data: Optional[str] = None
+        risk_data: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send an IntentMandate to a merchant agent."""
         parts = [
             {"kind": "text", "text": "Process this travel intent mandate"},
             {"kind": "data", "data": {"ap2.mandates.IntentMandate": intent_mandate}},
-            {"kind": "data", "data": {"shopping_agent_id": self.agent_name}}
+            {"kind": "data", "data": {"shopping_agent_id": self.agent_name}},
         ]
 
         if risk_data:
@@ -204,9 +196,9 @@ class A2AClient:
                     "kind": "message",
                     "messageId": message_id,
                     "role": "agent",
-                    "parts": parts
-                }
-            }
+                    "parts": parts,
+                },
+            },
         }
 
         headers = {
@@ -225,12 +217,15 @@ class A2AClient:
                     "to_agent": "merchant_agent",
                     "method": "send_intent_mandate",
                     "message_id": message_id,
-                    "mandate_id": intent_mandate.get("mandate_id", "unknown")
-                }
+                    "mandate_id": intent_mandate.get("mandate_id", "unknown"),
+                    "payload": request_body,
+                },
             )
 
         start_time = time.time()
-        response = await self.client.post(target_url, json=request_body, headers=headers)
+        response = await self.client.post(
+            target_url, json=request_body, headers=headers
+        )
         response.raise_for_status()
         result = response.json()
         duration_ms = (time.time() - start_time) * 1000
@@ -244,16 +239,15 @@ class A2AClient:
                     "from_agent": "merchant_agent",
                     "to_agent": self.agent_name,
                     "method": "intent_mandate_response",
-                    "duration_ms": round(duration_ms, 2)
-                }
+                    "duration_ms": round(duration_ms, 2),
+                    "payload": result,
+                },
             )
 
         return result
 
     async def send_cart_mandate(
-        self,
-        target_url: str,
-        cart_mandate: Dict[str, Any]
+        self, target_url: str, cart_mandate: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Send a CartMandate for credential tokenization."""
         parts = [
@@ -272,9 +266,9 @@ class A2AClient:
                     "kind": "message",
                     "messageId": message_id,
                     "role": "agent",
-                    "parts": parts
-                }
-            }
+                    "parts": parts,
+                },
+            },
         }
 
         headers = {
@@ -293,12 +287,15 @@ class A2AClient:
                     "to_agent": "credentials_agent",
                     "method": "send_cart_mandate",
                     "message_id": message_id,
-                    "mandate_id": cart_mandate.get("mandate_id", "unknown")
-                }
+                    "mandate_id": cart_mandate.get("mandate_id", "unknown"),
+                    "payload": request_body,
+                },
             )
 
         start_time = time.time()
-        response = await self.client.post(target_url, json=request_body, headers=headers)
+        response = await self.client.post(
+            target_url, json=request_body, headers=headers
+        )
         response.raise_for_status()
         result = response.json()
         duration_ms = (time.time() - start_time) * 1000
@@ -312,8 +309,9 @@ class A2AClient:
                     "from_agent": "credentials_agent",
                     "to_agent": self.agent_name,
                     "method": "cart_mandate_response",
-                    "duration_ms": round(duration_ms, 2)
-                }
+                    "duration_ms": round(duration_ms, 2),
+                    "payload": result,
+                },
             )
 
         return result
@@ -323,7 +321,7 @@ class A2AClient:
         target_url: str,
         payment_mandate: Dict[str, Any],
         cart_mandate: Dict[str, Any],
-        intent_mandate: Dict[str, Any]
+        intent_mandate: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Send a PaymentMandate for processing."""
         parts = [
@@ -344,9 +342,9 @@ class A2AClient:
                     "kind": "message",
                     "messageId": message_id,
                     "role": "agent",
-                    "parts": parts
-                }
-            }
+                    "parts": parts,
+                },
+            },
         }
 
         headers = {
@@ -365,12 +363,15 @@ class A2AClient:
                     "to_agent": "payment_agent",
                     "method": "send_payment_mandate",
                     "message_id": message_id,
-                    "mandate_id": payment_mandate.get("mandate_id", "unknown")
-                }
+                    "mandate_id": payment_mandate.get("mandate_id", "unknown"),
+                    "payload": request_body,
+                },
             )
 
         start_time = time.time()
-        response = await self.client.post(target_url, json=request_body, headers=headers)
+        response = await self.client.post(
+            target_url, json=request_body, headers=headers
+        )
         response.raise_for_status()
         result = response.json()
         duration_ms = (time.time() - start_time) * 1000
@@ -384,8 +385,9 @@ class A2AClient:
                     "from_agent": "payment_agent",
                     "to_agent": self.agent_name,
                     "method": "payment_mandate_response",
-                    "duration_ms": round(duration_ms, 2)
-                }
+                    "duration_ms": round(duration_ms, 2),
+                    "payload": result,
+                },
             )
 
         return result
@@ -413,17 +415,13 @@ def build_a2a_response(
     request_id: str,
     text: Optional[str] = None,
     data: Optional[Dict[str, Any]] = None,
-    error: Optional[Dict[str, Any]] = None
+    error: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Build a JSON-RPC 2.0 response for an A2A message.
     """
     if error:
-        return {
-            "id": request_id,
-            "jsonrpc": "2.0",
-            "error": error
-        }
+        return {"id": request_id, "jsonrpc": "2.0", "error": error}
 
     parts = []
     if text:
@@ -438,12 +436,14 @@ def build_a2a_response(
             "kind": "message",
             "messageId": str(uuid.uuid4()),
             "role": "agent",
-            "parts": parts
-        }
+            "parts": parts,
+        },
     }
 
 
-def extract_mandate_from_message(message: Dict[str, Any], mandate_type: str) -> Optional[Dict[str, Any]]:
+def extract_mandate_from_message(
+    message: Dict[str, Any], mandate_type: str
+) -> Optional[Dict[str, Any]]:
     """
     Extract a specific mandate type from an A2A message.
 

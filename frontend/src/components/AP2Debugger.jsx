@@ -52,33 +52,50 @@ export default function AP2Debugger() {
           setLogs((prev) => [...prev.slice(-499), log])
 
           // Extract A2A messages - look for various A2A-related patterns
-          const msg = log.message?.toLowerCase() || ''
-          const isA2AMessage =
-            msg.includes('a2a') ||
-            msg.includes('mandate') ||
-            msg.includes('send_') ||
-            msg.includes('merchant_agent') ||
-            msg.includes('payment_agent') ||
-            msg.includes('credentials_agent')
+          const originalMsg = log.message || ''
+          const msg = originalMsg.toLowerCase()
+          
+          // Check for A2A message patterns
+          const isA2ASent = originalMsg.includes('A2A SENT:')
+          const isA2AReceived = originalMsg.includes('A2A RECEIVED:')
+          
+          if (isA2ASent || isA2AReceived) {
+            // Parse the message format: "A2A SENT: from_agent → to_agent [method]"
+            // or "A2A RECEIVED: from_agent → to_agent [method]"
+            
+            let direction, fromAgent, toAgent, method
+            
+            // Extract method from brackets [method]
+            const methodMatch = originalMsg.match(/\[([^\]]+)\]/)
+            method = methodMatch ? methodMatch[1] : 'message'
+            
+            // Parse agents from the arrow format: "from_agent → to_agent"
+            const arrowMatch = originalMsg.match(/([\w_]+)\s*→\s*([\w_]+)/)
+            
+            if (arrowMatch) {
+              const parsedFrom = arrowMatch[1]
+              const parsedTo = arrowMatch[2]
+              
+              if (isA2ASent) {
+                // SENT: shopping_agent is sending TO another agent
+                direction = 'outgoing'
+                fromAgent = log.agent || parsedFrom
+                toAgent = parsedTo.replace('_agent', '')
+              } else {
+                // RECEIVED: shopping_agent is receiving FROM another agent
+                direction = 'incoming'
+                fromAgent = parsedFrom.replace('_agent', '')
+                toAgent = log.agent || parsedTo
+              }
+            } else {
+              // Fallback parsing
+              direction = isA2ASent ? 'outgoing' : 'incoming'
+              fromAgent = log.agent || 'shopping'
+              toAgent = 'unknown'
+            }
 
-          if (isA2AMessage) {
-            // Parse direction from message
-            let direction = 'outgoing'
-            let method = 'message'
-            let fromAgent = log.agent || 'shopping'
-            let toAgent = 'unknown'
-
-            if (msg.includes('received')) direction = 'incoming'
-            if (msg.includes('sending') || msg.includes('send_')) direction = 'outgoing'
-
-            if (msg.includes('merchant')) toAgent = 'merchant'
-            else if (msg.includes('payment')) toAgent = 'payment'
-            else if (msg.includes('credentials')) toAgent = 'credentials'
-
-            if (msg.includes('intent')) method = 'send_intent_mandate'
-            else if (msg.includes('cart')) method = 'send_cart_mandate'
-            else if (msg.includes('payment')) method = 'send_payment_mandate'
-            else if (msg.includes('token')) method = 'get_payment_methods'
+            // Get payload from extra fields if available
+            const payload = log.extra || {}
 
             setMessages((prev) => [
               ...prev.slice(-99),
@@ -89,9 +106,9 @@ export default function AP2Debugger() {
                 method,
                 from: fromAgent,
                 to: toAgent,
-                payload: {},
+                payload,
                 status: 'success',
-                rawMessage: log.message,
+                rawMessage: originalMsg,
               },
             ])
           }
