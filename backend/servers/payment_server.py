@@ -73,7 +73,17 @@ async def a2a_endpoint(request: Request):
     """
     try:
         body = await request.json()
-        logger.info(f"A2A request received: {body.get('method', 'unknown')}")
+        from_agent = request.headers.get("X-A2A-Agent", "shopping_agent")
+        logger.info(
+            f"A2A RECEIVED: {from_agent} → payment_agent [message/send]",
+            extra={
+                "type": "a2a_message",
+                "direction": "RECEIVED",
+                "from_agent": from_agent,
+                "to_agent": "payment_agent",
+                "method": body.get("method", "unknown")
+            }
+        )
 
         method = body.get("method")
         request_id = body.get("id", "unknown")
@@ -125,6 +135,18 @@ async def a2a_endpoint(request: Request):
                 text=f"Payment failed: {result.get('error', 'Unknown error')}",
                 data=result
             )
+
+        logger.info(
+            f"A2A SENT: payment_agent → {from_agent} [payment_processed]",
+            extra={
+                "type": "a2a_message",
+                "direction": "SENT",
+                "from_agent": "payment_agent",
+                "to_agent": from_agent,
+                "method": "payment_mandate_response",
+                "transaction_id": result.get("transaction_id")
+            }
+        )
 
         return build_a2a_response(
             request_id,

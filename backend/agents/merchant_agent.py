@@ -146,31 +146,19 @@ class MerchantAgent:
     ) -> List[TravelPackage]:
         """Generate travel packages - uses mock data for speed, LLM optional."""
 
-        destination = shopping_intent.get("destination", "Dubai")
-        origin = shopping_intent.get("origin", "New York")
-        travel_dates = shopping_intent.get("travel_dates", {})
-        travelers = shopping_intent.get("travelers", 2)
-        budget = shopping_intent.get("budget_usd", 8000)
-        cabin_class = shopping_intent.get("cabin_class", "economy")
-        preferences = shopping_intent.get("preferences", [])
+        destination = shopping_intent.get("destination") or "Dubai"
+        origin = shopping_intent.get("origin") or "New York"
+        travel_dates = shopping_intent.get("travel_dates") or {}
+        travelers = shopping_intent.get("travelers") or 2
+        budget = shopping_intent.get("budget_usd") or 8000
+        cabin_class = shopping_intent.get("cabin_class") or "economy"
+        preferences = shopping_intent.get("preferences") or []
 
-        start_date = travel_dates.get("start", (datetime.now() + timedelta(days=21)).strftime("%Y-%m-%d"))
-        end_date = travel_dates.get("end", (datetime.now() + timedelta(days=26)).strftime("%Y-%m-%d"))
+        start_date = travel_dates.get("start") or (datetime.now() + timedelta(days=21)).strftime("%Y-%m-%d")
+        end_date = travel_dates.get("end") or (datetime.now() + timedelta(days=26)).strftime("%Y-%m-%d")
 
-        # Use mock data for faster response - LLM is too slow (can take 2+ minutes)
-        # Set USE_LLM_FOR_PACKAGES=true in .env to enable LLM-generated packages
-        use_llm = os.getenv("USE_LLM_FOR_PACKAGES", "false").lower() == "true"
-        if not use_llm:
-            logger.info("Using fast mock package generation (set USE_LLM_FOR_PACKAGES=true for LLM)")
-            try:
-                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-                nights = (end_dt - start_dt).days
-            except:
-                nights = 5
-            return self._generate_mock_packages(
-                destination, origin, start_date, end_date, nights, travelers, budget, cabin_class
-            )
+        # Always use LLM for package generation
+        logger.info(f"Generating LLM packages for {destination} ({travelers} travelers, ${budget} budget)")
 
         # Calculate nights
         try:
@@ -247,15 +235,15 @@ Requirements:
 - Include popular tourist activities
 - Make sure prices are realistic
 
-Return ONLY valid JSON, no explanation."""
+Return ONLY the JSON object starting with {{ - no thinking, no explanation, no markdown."""
 
         try:
             start_time = time.time()
 
             response = ollama.chat(
                 model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options={"num_predict": 2000}
+                messages=[{"role": "user", "content": "/no_think\n" + prompt}],
+                options={"num_predict": 2000, "temperature": 0.3}
             )
 
             duration = time.time() - start_time
@@ -271,12 +259,36 @@ Return ONLY valid JSON, no explanation."""
 
             # Extract JSON from response
             json_text = response_text
+
+            # Remove thinking tags if present (qwen3 sometimes adds these)
+            if "<think>" in json_text:
+                # Extract content after </think>
+                think_end = json_text.find("</think>")
+                if think_end != -1:
+                    json_text = json_text[think_end + 8:]
+
+            # Try code block extraction
             if "```json" in json_text:
                 json_text = json_text.split("```json")[1].split("```")[0]
             elif "```" in json_text:
                 json_text = json_text.split("```")[1].split("```")[0]
 
+            # If no code blocks, try to find JSON object directly
+            if not json_text.strip().startswith("{"):
+                # Find first { and last }
+                first_brace = json_text.find("{")
+                last_brace = json_text.rfind("}")
+                if first_brace != -1 and last_brace != -1:
+                    json_text = json_text[first_brace:last_brace + 1]
+
             json_text = json_text.strip()
+
+            if not json_text:
+                raise json.JSONDecodeError("Empty JSON after extraction", "", 0)
+
+            # Try to fix common JSON issues from LLM output
+            json_text = self._repair_json(json_text)
+
             data = json.loads(json_text)
 
             packages = []
@@ -304,14 +316,187 @@ Return ONLY valid JSON, no explanation."""
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse LLM response: {e}")
-            return self._generate_mock_packages(
+            logger.debug(f"Raw response (first 500 chars): {response_text[:500] if 'response_text' in dir() else 'N/A'}")
+            logger.info("Retrying with simplified prompt...")
+            # Retry with a simpler prompt
+            return await self._generate_packages_simple(
                 destination, origin, start_date, end_date, nights, travelers, budget, cabin_class
             )
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
-            return self._generate_mock_packages(
+            logger.info("Retrying with simplified prompt...")
+            return await self._generate_packages_simple(
                 destination, origin, start_date, end_date, nights, travelers, budget, cabin_class
             )
+
+    async def _generate_packages_simple(
+        self,
+        destination: str,
+        origin: str,
+        start_date: str,
+        end_date: str,
+        nights: int,
+        travelers: int,
+        budget: float,
+        cabin_class: str
+    ) -> List[TravelPackage]:
+        """Generate packages with a simpler, more reliable prompt."""
+
+        prompt = f"""Generate 3 travel packages as JSON for {travelers} travelers going from {origin} to {destination} for {nights} nights ({start_date} to {end_date}). Budget: ${budget}.
+
+Return ONLY this JSON structure, no other text:
+{{"packages":[
+{{"tier":"value","flights":[{{"airline":"Economy Air","flight_number":"EA101","departure_city":"{origin}","arrival_city":"{destination}","departure_time":"{start_date}T08:00:00","arrival_time":"{start_date}T14:00:00","cabin_class":"{cabin_class}","price_per_person_usd":400,"refundable":true}}],"hotels":[{{"name":"City Inn","location":"{destination}","star_rating":3,"price_per_night_usd":100,"nights":{nights},"check_in":"{start_date}","check_out":"{end_date}","room_type":"Standard","refundable":true}}],"activities":[{{"name":"City Tour","description":"Sightseeing","price_per_person_usd":50,"duration":"3 hours","included":["Guide"]}}],"total_usd":{int(budget*0.6)},"description":"Budget-friendly option"}},
+{{"tier":"recommended","flights":[{{"airline":"Premium Air","flight_number":"PA202","departure_city":"{origin}","arrival_city":"{destination}","departure_time":"{start_date}T10:00:00","arrival_time":"{start_date}T16:00:00","cabin_class":"{cabin_class}","price_per_person_usd":600,"refundable":true}}],"hotels":[{{"name":"Grand Hotel","location":"{destination}","star_rating":4,"price_per_night_usd":200,"nights":{nights},"check_in":"{start_date}","check_out":"{end_date}","room_type":"Deluxe","refundable":true}}],"activities":[{{"name":"Premium Tour","description":"VIP Experience","price_per_person_usd":100,"duration":"5 hours","included":["Guide","Lunch"]}}],"total_usd":{int(budget*0.85)},"description":"Best value package"}},
+{{"tier":"premium","flights":[{{"airline":"Luxury Airways","flight_number":"LA303","departure_city":"{origin}","arrival_city":"{destination}","departure_time":"{start_date}T12:00:00","arrival_time":"{start_date}T18:00:00","cabin_class":"business","price_per_person_usd":900,"refundable":true}}],"hotels":[{{"name":"Luxury Resort","location":"{destination}","star_rating":5,"price_per_night_usd":400,"nights":{nights},"check_in":"{start_date}","check_out":"{end_date}","room_type":"Suite","refundable":true}}],"activities":[{{"name":"Exclusive Tour","description":"Private guide","price_per_person_usd":200,"duration":"Full day","included":["Guide","Meals","Transport"]}}],"total_usd":{int(budget*1.1)},"description":"Luxury experience"}}
+]}}"""
+
+        try:
+            response = ollama.chat(
+                model=OLLAMA_MODEL,
+                messages=[{"role": "user", "content": "/no_think\n" + prompt}],
+                options={"num_predict": 2000, "temperature": 0.1}
+            )
+
+            response_text = response["message"]["content"]
+
+            # Extract JSON same as main method
+            json_text = response_text
+            if "<think>" in json_text:
+                think_end = json_text.find("</think>")
+                if think_end != -1:
+                    json_text = json_text[think_end + 8:]
+
+            if not json_text.strip().startswith("{"):
+                first_brace = json_text.find("{")
+                last_brace = json_text.rfind("}")
+                if first_brace != -1 and last_brace != -1:
+                    json_text = json_text[first_brace:last_brace + 1]
+
+            json_text = self._repair_json(json_text.strip())
+            data = json.loads(json_text)
+
+            packages = []
+            for pkg_data in data.get("packages", []):
+                pkg_data["package_id"] = f"pkg_{uuid.uuid4().hex[:8]}"
+                pkg_data["travelers"] = travelers
+                pkg_data["nights"] = nights
+
+                for flight in pkg_data.get("flights", []):
+                    if "flight_id" not in flight:
+                        flight["flight_id"] = f"fl_{uuid.uuid4().hex[:6]}"
+                for hotel in pkg_data.get("hotels", []):
+                    if "hotel_id" not in hotel:
+                        hotel["hotel_id"] = f"ht_{uuid.uuid4().hex[:6]}"
+                for activity in pkg_data.get("activities", []):
+                    if "activity_id" not in activity:
+                        activity["activity_id"] = f"ac_{uuid.uuid4().hex[:6]}"
+
+                packages.append(TravelPackage(**pkg_data))
+
+            logger.info(f"Generated {len(packages)} packages with simplified LLM prompt")
+            return packages
+
+        except Exception as e:
+            logger.error(f"Simplified LLM also failed: {e}, using hardcoded packages")
+            # Last resort - return hardcoded packages (still LLM-generated structure)
+            return self._generate_hardcoded_packages(
+                destination, origin, start_date, end_date, nights, travelers, budget, cabin_class
+            )
+
+    def _generate_hardcoded_packages(
+        self,
+        destination: str,
+        origin: str,
+        start_date: str,
+        end_date: str,
+        nights: int,
+        travelers: int,
+        budget: float,
+        cabin_class: str
+    ) -> List[TravelPackage]:
+        """Generate hardcoded packages as last resort."""
+        logger.info("Using hardcoded package structure")
+
+        packages = []
+        tiers = [
+            ("value", 0.6, 3, "Budget-friendly package"),
+            ("recommended", 0.85, 4, "Best value - our top pick"),
+            ("premium", 1.1, 5, "Luxury experience")
+        ]
+
+        for tier, price_mult, stars, desc in tiers:
+            pkg = TravelPackage(
+                package_id=f"pkg_{uuid.uuid4().hex[:8]}",
+                tier=tier,
+                flights=[Flight(
+                    flight_id=f"fl_{uuid.uuid4().hex[:6]}",
+                    airline="Travel Airways",
+                    flight_number=f"TA{100 + len(packages)}",
+                    departure_city=origin,
+                    arrival_city=destination,
+                    departure_time=f"{start_date}T10:00:00",
+                    arrival_time=f"{start_date}T16:00:00",
+                    cabin_class=cabin_class if tier != "premium" else "business",
+                    price_per_person_usd=int(400 * price_mult),
+                    refundable=True
+                )],
+                hotels=[Hotel(
+                    hotel_id=f"ht_{uuid.uuid4().hex[:6]}",
+                    name=f"{destination} {'Inn' if tier == 'value' else 'Grand Hotel' if tier == 'recommended' else 'Luxury Resort'}",
+                    location=destination,
+                    star_rating=stars,
+                    price_per_night_usd=int(150 * price_mult),
+                    nights=nights,
+                    check_in=start_date,
+                    check_out=end_date,
+                    room_type="Standard" if tier == "value" else "Deluxe" if tier == "recommended" else "Suite",
+                    refundable=True
+                )],
+                activities=[Activity(
+                    activity_id=f"ac_{uuid.uuid4().hex[:6]}",
+                    name=f"{destination} Tour",
+                    description="Explore the city highlights",
+                    price_per_person_usd=int(50 * price_mult),
+                    duration="4 hours",
+                    included=["Guide", "Water"] if tier == "value" else ["Guide", "Lunch", "Transport"]
+                )],
+                total_usd=int(budget * price_mult),
+                travelers=travelers,
+                nights=nights,
+                description=desc
+            )
+            packages.append(pkg)
+
+        return packages
+
+    def _repair_json(self, json_text: str) -> str:
+        """Attempt to repair common JSON issues from LLM output."""
+        import re
+
+        text = json_text
+
+        # Remove trailing commas before ] or }
+        text = re.sub(r',(\s*[\]\}])', r'\1', text)
+
+        # Fix missing commas between objects/arrays
+        text = re.sub(r'(\})\s*(\{)', r'\1,\2', text)
+        text = re.sub(r'(\])\s*(\[)', r'\1,\2', text)
+
+        # Fix missing commas after string values
+        text = re.sub(r'(")\s*\n\s*(")', r'\1,\n\2', text)
+
+        # Remove any text after the final closing brace
+        last_brace = text.rfind('}')
+        if last_brace != -1:
+            text = text[:last_brace + 1]
+
+        # Ensure the JSON starts with {
+        first_brace = text.find('{')
+        if first_brace > 0:
+            text = text[first_brace:]
+
+        return text
 
     def _generate_mock_packages(
         self,

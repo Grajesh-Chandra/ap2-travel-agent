@@ -83,7 +83,17 @@ async def a2a_endpoint(request: Request):
     """
     try:
         body = await request.json()
-        logger.info(f"A2A request received: {body.get('method', 'unknown')}")
+        from_agent = request.headers.get("X-A2A-Agent", "shopping_agent")
+        logger.info(
+            f"A2A RECEIVED: {from_agent} → credentials_agent [message/send]",
+            extra={
+                "type": "a2a_message",
+                "direction": "RECEIVED",
+                "from_agent": from_agent,
+                "to_agent": "credentials_agent",
+                "method": body.get("method", "unknown")
+            }
+        )
 
         method = body.get("method")
         request_id = body.get("id", "unknown")
@@ -112,6 +122,17 @@ async def a2a_endpoint(request: Request):
         if "list" in instruction or "payment method" in instruction:
             # List payment methods
             payment_methods = credentials_agent.get_payment_methods(user_id)
+            logger.info(
+                f"A2A SENT: credentials_agent → {from_agent} [payment_methods_response]",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "SENT",
+                    "from_agent": "credentials_agent",
+                    "to_agent": from_agent,
+                    "method": "payment_methods_response",
+                    "methods_count": len(payment_methods)
+                }
+            )
             return build_a2a_response(
                 request_id,
                 text=f"Found {len(payment_methods)} payment methods",
@@ -130,6 +151,17 @@ async def a2a_endpoint(request: Request):
                 user_id=payer.get("user_id", user_id),
                 payment_token=payment_method.get("token", ""),
                 amount_usd=amounts.get("total_usd", 0)
+            )
+
+            logger.info(
+                f"A2A SENT: credentials_agent → {from_agent} [cart_mandate_tokenized]",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "SENT",
+                    "from_agent": "credentials_agent",
+                    "to_agent": from_agent,
+                    "method": "cart_mandate_response"
+                }
             )
 
             return build_a2a_response(

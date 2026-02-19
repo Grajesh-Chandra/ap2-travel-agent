@@ -71,7 +71,17 @@ async def a2a_endpoint(request: Request):
     """
     try:
         body = await request.json()
-        logger.info(f"A2A request received: {body.get('method', 'unknown')}")
+        from_agent = request.headers.get("X-A2A-Agent", "shopping_agent")
+        logger.info(
+            f"A2A RECEIVED: {from_agent} → merchant_agent [message/send]",
+            extra={
+                "type": "a2a_message",
+                "direction": "RECEIVED",
+                "from_agent": from_agent,
+                "to_agent": "merchant_agent",
+                "method": body.get("method", "unknown")
+            }
+        )
 
         method = body.get("method")
         request_id = body.get("id", "unknown")
@@ -121,6 +131,18 @@ async def a2a_endpoint(request: Request):
                 request_id,
                 error={"code": -32600, "message": result["error"]}
             )
+
+        logger.info(
+            f"A2A SENT: merchant_agent → {from_agent} [intent_mandate_response]",
+            extra={
+                "type": "a2a_message",
+                "direction": "SENT",
+                "from_agent": "merchant_agent",
+                "to_agent": from_agent,
+                "method": "intent_mandate_response",
+                "packages_count": len(result.get('packages', []))
+            }
+        )
 
         return build_a2a_response(
             request_id,

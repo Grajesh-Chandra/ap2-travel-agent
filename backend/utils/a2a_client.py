@@ -99,6 +99,31 @@ class A2AClient:
         # Send request and measure timing
         start_time = time.time()
 
+        # Extract target agent name from URL
+        target_agent = "unknown"
+        if "merchant" in target_url:
+            target_agent = "merchant_agent"
+        elif "credentials" in target_url:
+            target_agent = "credentials_agent"
+        elif "payment" in target_url:
+            target_agent = "payment_agent"
+        elif "shopping" in target_url:
+            target_agent = "shopping_agent"
+
+        if self.logger:
+            self.logger.info(
+                f"A2A SENT: {self.agent_name} → {target_agent} [message/send]",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "SENT",
+                    "from_agent": self.agent_name,
+                    "to_agent": target_agent,
+                    "method": "message/send",
+                    "message_id": message_id,
+                    "target_url": target_url
+                }
+            )
+
         try:
             response = await self.client.post(
                 target_url,
@@ -112,10 +137,13 @@ class A2AClient:
 
             if self.logger:
                 self.logger.info(
-                    f"A2A Message sent to {target_url}",
+                    f"A2A RECEIVED: {target_agent} → {self.agent_name} [response] ({duration_ms:.0f}ms)",
                     extra={
-                        "type": "a2a_sent",
-                        "target_url": target_url,
+                        "type": "a2a_message",
+                        "direction": "RECEIVED",
+                        "from_agent": target_agent,
+                        "to_agent": self.agent_name,
+                        "method": "message/send_response",
                         "message_id": message_id,
                         "duration_ms": round(duration_ms, 2),
                         "payload_size": len(json.dumps(request_body))
@@ -165,6 +193,7 @@ class A2AClient:
         if risk_data:
             parts.append({"kind": "data", "data": {"risk_data": risk_data}})
 
+        message_id = str(uuid.uuid4())
         request_body = {
             "id": str(uuid.uuid4()),
             "jsonrpc": "2.0",
@@ -173,7 +202,7 @@ class A2AClient:
                 "configuration": {"acceptedOutputModes": [], "blocking": True},
                 "message": {
                     "kind": "message",
-                    "messageId": str(uuid.uuid4()),
+                    "messageId": message_id,
                     "role": "agent",
                     "parts": parts
                 }
@@ -186,9 +215,40 @@ class A2AClient:
             "X-A2A-Agent": self.agent_name,
         }
 
+        if self.logger:
+            self.logger.info(
+                f"A2A SENT: {self.agent_name} → merchant_agent [send_intent_mandate]",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "SENT",
+                    "from_agent": self.agent_name,
+                    "to_agent": "merchant_agent",
+                    "method": "send_intent_mandate",
+                    "message_id": message_id,
+                    "mandate_id": intent_mandate.get("mandate_id", "unknown")
+                }
+            )
+
+        start_time = time.time()
         response = await self.client.post(target_url, json=request_body, headers=headers)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        duration_ms = (time.time() - start_time) * 1000
+
+        if self.logger:
+            self.logger.info(
+                f"A2A RECEIVED: merchant_agent → {self.agent_name} [intent_mandate_response] ({duration_ms:.0f}ms)",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "RECEIVED",
+                    "from_agent": "merchant_agent",
+                    "to_agent": self.agent_name,
+                    "method": "intent_mandate_response",
+                    "duration_ms": round(duration_ms, 2)
+                }
+            )
+
+        return result
 
     async def send_cart_mandate(
         self,
@@ -201,6 +261,7 @@ class A2AClient:
             {"kind": "data", "data": {"ap2.mandates.CartMandate": cart_mandate}},
         ]
 
+        message_id = str(uuid.uuid4())
         request_body = {
             "id": str(uuid.uuid4()),
             "jsonrpc": "2.0",
@@ -209,7 +270,7 @@ class A2AClient:
                 "configuration": {"acceptedOutputModes": [], "blocking": True},
                 "message": {
                     "kind": "message",
-                    "messageId": str(uuid.uuid4()),
+                    "messageId": message_id,
                     "role": "agent",
                     "parts": parts
                 }
@@ -222,9 +283,40 @@ class A2AClient:
             "X-A2A-Agent": self.agent_name,
         }
 
+        if self.logger:
+            self.logger.info(
+                f"A2A SENT: {self.agent_name} → credentials_agent [send_cart_mandate]",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "SENT",
+                    "from_agent": self.agent_name,
+                    "to_agent": "credentials_agent",
+                    "method": "send_cart_mandate",
+                    "message_id": message_id,
+                    "mandate_id": cart_mandate.get("mandate_id", "unknown")
+                }
+            )
+
+        start_time = time.time()
         response = await self.client.post(target_url, json=request_body, headers=headers)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        duration_ms = (time.time() - start_time) * 1000
+
+        if self.logger:
+            self.logger.info(
+                f"A2A RECEIVED: credentials_agent → {self.agent_name} [cart_mandate_response] ({duration_ms:.0f}ms)",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "RECEIVED",
+                    "from_agent": "credentials_agent",
+                    "to_agent": self.agent_name,
+                    "method": "cart_mandate_response",
+                    "duration_ms": round(duration_ms, 2)
+                }
+            )
+
+        return result
 
     async def send_payment_mandate(
         self,
@@ -241,6 +333,7 @@ class A2AClient:
             {"kind": "data", "data": {"ap2.mandates.IntentMandate": intent_mandate}},
         ]
 
+        message_id = str(uuid.uuid4())
         request_body = {
             "id": str(uuid.uuid4()),
             "jsonrpc": "2.0",
@@ -249,7 +342,7 @@ class A2AClient:
                 "configuration": {"acceptedOutputModes": [], "blocking": True},
                 "message": {
                     "kind": "message",
-                    "messageId": str(uuid.uuid4()),
+                    "messageId": message_id,
                     "role": "agent",
                     "parts": parts
                 }
@@ -262,9 +355,40 @@ class A2AClient:
             "X-A2A-Agent": self.agent_name,
         }
 
+        if self.logger:
+            self.logger.info(
+                f"A2A SENT: {self.agent_name} → payment_agent [send_payment_mandate]",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "SENT",
+                    "from_agent": self.agent_name,
+                    "to_agent": "payment_agent",
+                    "method": "send_payment_mandate",
+                    "message_id": message_id,
+                    "mandate_id": payment_mandate.get("mandate_id", "unknown")
+                }
+            )
+
+        start_time = time.time()
         response = await self.client.post(target_url, json=request_body, headers=headers)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        duration_ms = (time.time() - start_time) * 1000
+
+        if self.logger:
+            self.logger.info(
+                f"A2A RECEIVED: payment_agent → {self.agent_name} [payment_mandate_response] ({duration_ms:.0f}ms)",
+                extra={
+                    "type": "a2a_message",
+                    "direction": "RECEIVED",
+                    "from_agent": "payment_agent",
+                    "to_agent": self.agent_name,
+                    "method": "payment_mandate_response",
+                    "duration_ms": round(duration_ms, 2)
+                }
+            )
+
+        return result
 
     async def get_agent_card(self, base_url: str) -> Dict[str, Any]:
         """Fetch an agent's well-known card."""
