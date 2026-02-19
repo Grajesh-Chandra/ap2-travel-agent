@@ -17,7 +17,11 @@ import AgentNetwork from './AgentNetwork'
 
 const API_BASE = ''
 
-export default function TravelPlanner({ onProceedToCheckout }) {
+export default function TravelPlanner({
+  onProceedToCheckout,
+  onSessionUpdate,
+  onSelectedPackage,
+}) {
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [chatHistory, setChatHistory] = useState([])
@@ -63,6 +67,11 @@ export default function TravelPlanner({ onProceedToCheckout }) {
       if (data.success) {
         // Always update session data
         setSessionData(data)
+        onSessionUpdate?.(data)
+
+        if (data.selected_package) {
+          onSelectedPackage?.(data.selected_package)
+        }
 
         // Add response to chat based on type
         setChatHistory((prev) => [

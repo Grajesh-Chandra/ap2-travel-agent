@@ -612,9 +612,14 @@ OUTPUT ONLY THE JSON, no explanation."""
         # Step 1: Classify intent using LLM (or fast fallback)
         # Try simple classification first for speed, use LLM for complex messages
         msg_lower = message.lower().strip()
-        use_llm = len(message) > 30 or any(c in message for c in ["$", "@", ",", "."])
 
-        if use_llm:
+        # Special handling for CHECKOUT_DETAILS stage - always use simple classifier
+        # for checkout options to ensure emojis and specific keywords are detected
+        if stage == ConversationStage.CHECKOUT_DETAILS:
+            # Force simple classification for checkout to avoid LLM misclassification
+            intent_result = self._classify_intent_simple(message, session)
+            logger.info(f"[Orchestrator] Using simple classifier for checkout stage")
+        elif len(message) > 30 or any(c in message for c in ["$", "@", ",", "."]):
             intent_result = await self._classify_intent_with_llm(message, session)
         else:
             intent_result = self._classify_intent_simple(message, session)
@@ -691,7 +696,7 @@ OUTPUT ONLY THE JSON, no explanation."""
                 return await self._execute_search(session)
             elif stage == ConversationStage.CHECKOUT_DETAILS:
                 session["stage"] = ConversationStage.PAYMENT_SELECTION
-                return self._build_payment_selection_response(session)
+                return await self._build_payment_selection_response(session)
             elif stage == ConversationStage.PAYMENT_SELECTION:
                 return await self._process_payment(session)
             else:
@@ -881,7 +886,7 @@ Answer in 1-3 sentences, then guide them back to the booking flow if appropriate
 
         elif stage == ConversationStage.CHECKOUT_DETAILS:
             session["stage"] = ConversationStage.PAYMENT_SELECTION
-            return self._build_payment_selection_response(session)
+            return await self._build_payment_selection_response(session)
 
         elif stage == ConversationStage.PAYMENT_SELECTION:
             return await self._process_payment(session)
@@ -993,7 +998,7 @@ Answer in 1-3 sentences, then guide them back to the booking flow if appropriate
 
         # We have all checkout details, move to payment
         session["stage"] = ConversationStage.PAYMENT_SELECTION
-        return self._build_payment_selection_response(session)
+        return await self._build_payment_selection_response(session)
 
     async def _handle_digital_wallet_checkout(self, session: Dict) -> Dict[str, Any]:
         """Handle digital wallet quick checkout - auto-fill with demo values."""
@@ -1054,24 +1059,30 @@ Would you like to proceed with payment?""",
         session["payment_method"] = method.lower()
         return await self._finalize_booking(session)
 
-    def _build_payment_selection_response(self, session: Dict) -> Dict[str, Any]:
+    async def _build_payment_selection_response(self, session: Dict) -> Dict[str, Any]:
         """Build response for payment method selection."""
         selected_pkg = session.get("selected_package", {})
-        total = (
-            selected_pkg.get("total_price_usd", 0)
-            if isinstance(selected_pkg, dict)
-            else 0
-        )
+        if isinstance(selected_pkg, dict):
+            total = selected_pkg.get(
+                "total_usd", selected_pkg.get("total_price_usd", 0)
+            )
+        else:
+            total = 0
+
+        payment_methods = await self._get_payment_methods_list(session)
+        session["payment_methods"] = payment_methods
+
+        suggestions = [
+            f"Pay with {pm.get('network', 'Card')} ****{pm.get('last4', '----')}"
+            for pm in payment_methods[:3]
+        ]
 
         return {
             "success": True,
             "type": "payment_selection",
             "message": f"Great! Your total is **${total:,.2f}**.\n\nHow would you like to pay?",
-            "suggestions": ["Credit Card", "Debit Card", "Digital Wallet"],
-            "payment_methods": [
-                {"id": "card", "name": "Credit/Debit Card", "icon": "💳"},
-                {"id": "wallet", "name": "Digital Wallet", "icon": "📱"},
-            ],
+            "suggestions": suggestions,
+            "payment_methods": payment_methods,
             "total": total,
             "input_hint": "payment_method",
         }
@@ -1402,7 +1413,7 @@ Output JSON only:"""
 
         # All checkout details collected, move to payment
         session["stage"] = ConversationStage.PAYMENT_SELECTION
-        return self._build_payment_selection_response(session)
+        return await self._build_payment_selection_response(session)
 
     def _simple_extract(self, message: str) -> Dict:
         """Simple pattern-based extraction as fallback."""
@@ -2573,13 +2584,23 @@ Please select a payment method:""",
                         session["stage"] = ConversationStage.COMPLETED
                         session["confirmation"] = confirmation
 
+                        confirmation_number = confirmation.get(
+                            "confirmation_number",
+                            confirmation.get("transaction_id", "N/A"),
+                        )
+                        amount_charged = confirmation.get("amount_charged")
+                        if amount_charged is None:
+                            amount_charged = (
+                                confirmation.get("total_charged", {}) or {}
+                            ).get("total_usd", total)
+
                         return {
                             "success": True,
                             "type": "payment_complete",
                             "message": f"""✅ **Payment Successful!**
 
-🎫 **Confirmation:** {confirmation.get("confirmation_number", "N/A")}
-💳 **Amount:** ${confirmation.get("amount_charged", total):,.2f}
+🎫 **Confirmation:** {confirmation_number}
+💳 **Amount:** ${amount_charged:,.2f}
 📧 **Receipt sent to:** {checkout["email"]}
 
 **AP2 Mandate Chain:**

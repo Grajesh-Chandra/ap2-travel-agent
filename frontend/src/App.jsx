@@ -83,7 +83,11 @@ function App() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">
         {activeTab === 'planner' && (
-          <TravelPlanner onProceedToCheckout={handleProceedToCheckout} />
+          <TravelPlanner
+            onProceedToCheckout={handleProceedToCheckout}
+            onSessionUpdate={setSessionData}
+            onSelectedPackage={setSelectedPackage}
+          />
         )}
         {activeTab === 'checkout' && (
           <CheckoutFlow
