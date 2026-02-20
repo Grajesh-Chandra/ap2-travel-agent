@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from enum import Enum
-import ollama
+import httpx
 
 import sys
 from pathlib import Path
@@ -18,8 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import (
-    OLLAMA_MODEL,
-    OLLAMA_TIMEOUT,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+    OPENROUTER_TIMEOUT,
     MERCHANT_AGENT_URL,
     CREDENTIALS_AGENT_URL,
     PAYMENT_AGENT_URL,
@@ -69,7 +70,10 @@ class ConversationStage(str, Enum):
     SHOWING_PACKAGES = "showing_packages"
     CHECKOUT_DETAILS = "checkout_details"
     PAYMENT_SELECTION = "payment_selection"
+    OTP_VERIFICATION = "otp_verification"
     PROCESSING = "processing"
+    INTENT_SIGNING = "intent_signing"
+    DEVICE_SIGNING = "device_signing"
     COMPLETED = "completed"
 
 
@@ -187,19 +191,30 @@ OUTPUT ONLY THE JSON, no explanation."""
 
         try:
             start_time = time.time()
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.1, "num_predict": 500},
-            )
+            async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT) as client:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1
+                    }
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
             elapsed = time.time() - start_time
 
-            content = response.get("message", {}).get("content", "")
             log_llm_call(
                 logger, "intent_classification", prompt[:200], content, elapsed
             )
 
-            # Remove <think> tags if present (qwen3)
+            # Remove <think> tags if present (some LLMs add these)
             content = re.sub(
                 r"<think>.*?</think>", "", content, flags=re.DOTALL
             ).strip()
@@ -397,24 +412,6 @@ OUTPUT ONLY THE JSON, no explanation."""
                     "reasoning": "Manual checkout selected",
                 }
 
-            # Check if it looks like an email
-            if "@" in msg_lower and "." in message:
-                return {
-                    "intent": "provide_checkout",
-                    "confidence": 0.95,
-                    "extracted_data": {"email": message.strip()},
-                    "reasoning": "Email address",
-                }
-            # Check if it looks like a name (1-4 words, no digits, no special chars)
-            words = msg_lower.split()
-            if 1 <= len(words) <= 4 and not any(c.isdigit() for c in message):
-                if all(w.isalpha() for w in words):
-                    return {
-                        "intent": "provide_checkout",
-                        "confidence": 0.9,
-                        "extracted_data": {"name": message.strip()},
-                        "reasoning": "Name provided",
-                    }
             # Check for edit/change request
             if any(
                 word in msg_lower for word in ["edit", "change", "modify", "correct"]
@@ -438,23 +435,6 @@ OUTPUT ONLY THE JSON, no explanation."""
                     "reasoning": "User confirmed checkout details",
                 }
 
-            # Probably an address or other checkout info
-            return {
-                "intent": "provide_checkout",
-                "confidence": 0.8,
-                "extracted_data": {"address": message.strip()},
-                "reasoning": "Checkout information",
-            }
-
-            # Check for manual checkout selection
-            if any(word in msg_lower for word in ["manual", "fill", "enter", "myself"]):
-                return {
-                    "intent": "select_manual_checkout",
-                    "confidence": 0.95,
-                    "extracted_data": {},
-                    "reasoning": "Manual checkout selected",
-                }
-
             # Check if it looks like an email
             if "@" in msg_lower and "." in message:
                 return {
@@ -473,16 +453,14 @@ OUTPUT ONLY THE JSON, no explanation."""
                         "extracted_data": {"name": message.strip()},
                         "reasoning": "Name provided",
                     }
-            # Check for edit/change request
-            if any(
-                word in msg_lower for word in ["edit", "change", "modify", "correct"]
-            ):
-                return {
-                    "intent": "confirm_no",
-                    "confidence": 0.9,
-                    "extracted_data": {},
-                    "reasoning": "User wants to edit checkout details",
-                }
+
+            # Probably an address or other checkout info
+            return {
+                "intent": "provide_checkout",
+                "confidence": 0.8,
+                "extracted_data": {"address": message.strip()},
+                "reasoning": "Checkout information",
+            }
 
             # Check for confirmation to proceed
             if any(
@@ -504,8 +482,16 @@ OUTPUT ONLY THE JSON, no explanation."""
                 "reasoning": "Checkout information",
             }
 
-        # Payment selection - match exact suggestions
+        # Payment selection - match exact suggestions and common phrases
         if stage == ConversationStage.PAYMENT_SELECTION:
+            # "Pay with ..." is the exact suggestion format
+            if "pay with" in msg_lower or "****" in msg_lower or "••••" in msg_lower:
+                return {
+                    "intent": "select_payment",
+                    "confidence": 0.95,
+                    "extracted_data": {"payment_method": "card"},
+                    "reasoning": "Pay with card suggestion",
+                }
             if any(
                 w in msg_lower
                 for w in [
@@ -516,6 +502,9 @@ OUTPUT ONLY THE JSON, no explanation."""
                     "mastercard",
                     "credit card",
                     "debit card",
+                    "first",
+                    "proceed",
+                    "yes",
                 ]
             ):
                 return {
@@ -539,6 +528,16 @@ OUTPUT ONLY THE JSON, no explanation."""
                     "confidence": 0.8,
                     "extracted_data": {"payment_method": "wallet"},
                     "reasoning": "Wallet payment",
+                }
+
+        # OTP verification - any 6-digit number or "123456"
+        if stage == ConversationStage.OTP_VERIFICATION:
+            if msg_lower.strip().isdigit() or "123456" in msg_lower:
+                return {
+                    "intent": "provide_info",
+                    "confidence": 0.95,
+                    "extracted_data": {},
+                    "reasoning": "OTP input",
                 }
 
         # Questions
@@ -610,16 +609,28 @@ OUTPUT ONLY THE JSON, no explanation."""
         logger.info(f"[Orchestrator] Message: '{message[:80]}...' | Stage: {stage}")
 
         # Step 1: Classify intent using LLM (or fast fallback)
-        # Try simple classification first for speed, use LLM for complex messages
+        # Use simple (instant) classifier for deterministic stages where
+        # the expected input is well-known.  Only call the LLM for stages
+        # that genuinely need entity extraction (gathering info, greeting).
         msg_lower = message.lower().strip()
 
-        # Special handling for CHECKOUT_DETAILS stage - always use simple classifier
-        # for checkout options to ensure emojis and specific keywords are detected
-        if stage == ConversationStage.CHECKOUT_DETAILS:
-            # Force simple classification for checkout to avoid LLM misclassification
+        # Stages where the simple classifier is sufficient and faster
+        fast_stages = {
+            ConversationStage.CHECKOUT_DETAILS,
+            ConversationStage.PAYMENT_SELECTION,
+            ConversationStage.OTP_VERIFICATION,
+            ConversationStage.SHOWING_PACKAGES,
+            ConversationStage.CONFIRMING_SEARCH,
+            ConversationStage.INTENT_SIGNING,
+            ConversationStage.PROCESSING,
+            ConversationStage.COMPLETED,
+        }
+
+        if stage in fast_stages:
             intent_result = self._classify_intent_simple(message, session)
-            logger.info(f"[Orchestrator] Using simple classifier for checkout stage")
+            logger.info(f"[Orchestrator] Using simple classifier for {stage} stage")
         elif len(message) > 30 or any(c in message for c in ["$", "@", ",", "."]):
+            # Only use LLM during GREETING / GATHERING_INFO for entity extraction
             intent_result = await self._classify_intent_with_llm(message, session)
         else:
             intent_result = self._classify_intent_simple(message, session)
@@ -637,6 +648,14 @@ OUTPUT ONLY THE JSON, no explanation."""
         response["stage"] = session["stage"]
         response["agent_id"] = self.agent_id
         response["intent"] = intent  # Include for debugging
+
+        # Always include intent_mandate and selected_package in response
+        # so frontend tabs stay in sync
+        if session.get("intent_mandate") and "intent_mandate" not in response:
+            response["intent_mandate"] = session["intent_mandate"]
+        if session.get("selected_package") and "selected_package" not in response:
+            response["selected_package"] = session["selected_package"]
+
         session["conversation_history"].append(
             {"role": "assistant", "content": response}
         )
@@ -662,6 +681,7 @@ OUTPUT ONLY THE JSON, no explanation."""
         if intent == "provide_info" and stage in [
             ConversationStage.CHECKOUT_DETAILS,
             ConversationStage.PAYMENT_SELECTION,
+            ConversationStage.OTP_VERIFICATION,
         ]:
             logger.info(
                 f"[Orchestrator] Overriding intent from provide_info to provide_checkout (stage: {stage})"
@@ -670,13 +690,24 @@ OUTPUT ONLY THE JSON, no explanation."""
             # Don't extract destination/location data as travel info during checkout
             extracted = {}
 
+        # Special handling for signing stages - strict routing
+        if stage == ConversationStage.INTENT_SIGNING:
+            if intent in ["confirm_yes", "provide_info", "other"] or "sign" in message.lower():
+                return await self._handle_intent_signing_stage(message, session)
+
+        # Special handling for OTP stage - always route to OTP handler
+        # This is the AP2 challenge step; after OTP, agent automatically
+        # signs intent mandate + cart mandate via delegated access
+        if stage == ConversationStage.OTP_VERIFICATION:
+            return await self._handle_otp_verification_stage(message, session)
+
         # Route based on intent
         if intent == "greeting":
             session["stage"] = ConversationStage.GATHERING_INFO
             return {
                 "success": True,
                 "type": "conversation",
-                "message": "Hello! 👋 Welcome to AP2 Travel - where your dream trips meet secure, transparent checkout!\n\nI'm here to help you plan an amazing journey. Where would you like to go?",
+                "message": "Hello! 👋 I'm **Voyager AI**, your personal travel agent powered by the AP2 protocol.\n\nTell me where you'd like to go and I'll handle everything — from planning to secure checkout.",
                 "suggestions": [
                     "I want to visit Dubai",
                     "Planning a trip to Tokyo",
@@ -699,6 +730,8 @@ OUTPUT ONLY THE JSON, no explanation."""
                 return await self._build_payment_selection_response(session)
             elif stage == ConversationStage.PAYMENT_SELECTION:
                 return await self._process_payment(session)
+            elif stage == ConversationStage.OTP_VERIFICATION:
+                return await self._handle_otp_verification_stage("123456", session)
             else:
                 # Generic confirmation - continue to next step
                 return await self._continue_flow(session)
@@ -747,6 +780,13 @@ OUTPUT ONLY THE JSON, no explanation."""
         elif intent == "select_payment":
             method = extracted.get("payment_method", "card")
             return await self._handle_payment_method(method, session)
+
+        elif stage == ConversationStage.OTP_VERIFICATION:
+            return await self._handle_otp_verification_stage(message, session)
+
+        elif stage == ConversationStage.COMPLETED:
+            # Journey is finished — restart a new one
+            return self._handle_post_completion(message, session)
 
         else:
             # "other" or unknown - try to handle based on current stage
@@ -833,12 +873,23 @@ User question: "{message}"
 Answer in 1-3 sentences, then guide them back to the booking flow if appropriate."""
 
         try:
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.7, "num_predict": 200},
-            )
-            answer = response.get("message", {}).get("content", "")
+            async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT) as client:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7
+                    }
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                answer = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
             answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
         except Exception as e:
             logger.warning(f"LLM question answering failed: {e}")
@@ -859,6 +910,45 @@ Answer in 1-3 sentences, then guide them back to the booking flow if appropriate
             "type": "conversation",
             "message": "No problem! I've cleared everything. Would you like to start planning a new trip?",
             "suggestions": ["Yes, let's start fresh", "No thanks"],
+        }
+
+    def _handle_post_completion(self, message: str, session: Dict) -> Dict[str, Any]:
+        """Handle messages after journey is completed — offer to restart."""
+        previous_dest = session.get("collected_info", {}).get("destination", "")
+
+        # Reset session state for a fresh trip
+        session["stage"] = ConversationStage.GATHERING_INFO
+        session["collected_info"] = {}
+        session["packages"] = []
+        session["selected_package"] = None
+        session["checkout_details"] = {}
+        session["intent_mandate"] = None
+        session["cart_mandate"] = None
+        session["payment_mandate"] = None
+        session["confirmation"] = None
+
+        return {
+            "success": True,
+            "type": "conversation",
+            "message": f"""Great to have you back! 🎉 Your **{previous_dest}** trip is all set.
+
+Ready to plan your next adventure? Tell me where you'd like to go!""",
+            "suggestions": [
+                "Plan a trip to Tokyo",
+                "Beach vacation in Bali",
+                "Luxury getaway to Paris",
+                "Adventure in Dubai",
+            ],
+            "input_hint": "destination",
+        }
+
+    def reset_session(self, session_id: str) -> Dict[str, Any]:
+        """Reset/clear a session completely."""
+        if session_id in self.sessions:
+            del self.sessions[session_id]
+        return {
+            "success": True,
+            "message": "Session cleared successfully.",
         }
 
     async def _continue_flow(self, session: Dict) -> Dict[str, Any]:
@@ -983,10 +1073,14 @@ Answer in 1-3 sentences, then guide them back to the booking flow if appropriate
             field = missing_checkout[0]
             if field == "name":
                 msg = "What's your full name?"
+                suggestions = ["John Doe", "Alice Smith"]
             elif field == "email":
                 msg = f"Thanks, {checkout.get('name', 'there')}! What's your email address?"
+                name_part = checkout.get('name', 'user').split()[0].lower()
+                suggestions = [f"{name_part}@example.com", f"{name_part}.travels@email.com"]
             else:  # address
                 msg = "Great! And your billing address? (City, Country is fine)"
+                suggestions = ["New York, USA", "London, UK", "Dubai, UAE"]
 
             return {
                 "success": True,
@@ -994,6 +1088,7 @@ Answer in 1-3 sentences, then guide them back to the booking flow if appropriate
                 "message": msg,
                 "checkout_details": checkout,
                 "input_hint": field,
+                "suggestions": suggestions,
             }
 
         # We have all checkout details, move to payment
@@ -1047,7 +1142,7 @@ Would you like to proceed with payment?""",
             "success": True,
             "type": "conversation",
             "message": "Great! Let's collect your details. What's your full name?",
-            "suggestions": [],
+            "suggestions": ["John Doe", "Alice Smith"],
             "input_hint": "name",
             "checkout_fields_needed": ["name", "email", "address"],
         }
@@ -1056,8 +1151,39 @@ Would you like to proceed with payment?""",
         self, method: str, session: Dict
     ) -> Dict[str, Any]:
         """Handle payment method selection and process payment."""
+        # Store payment method preference
         session["payment_method"] = method.lower()
-        return await self._finalize_booking(session)
+
+        # Get actual method object
+        payment_methods = await self._get_payment_methods_list(session)
+        selected_method = None
+        for pm in payment_methods:
+            if method.lower() == "card" and pm.get("type") == "CARD":
+                selected_method = pm
+                break
+            elif method.lower() == "wallet" and pm.get("type") == "WALLET":
+                selected_method = pm
+                break
+
+        if not selected_method and payment_methods:
+            selected_method = payment_methods[0]
+
+        if selected_method:
+            session["selected_payment_method"] = selected_method
+            session["stage"] = ConversationStage.OTP_VERIFICATION
+
+            return {
+                "success": True,
+                "type": "conversation",
+                "message": f"""You selected **{selected_method['network']} ••••{selected_method['last4']}**.
+
+To secure your transaction, an OTP has been sent to your registered device. Please enter the 6-digit OTP (use '123456' for demo):""",
+                "suggestions": ["123456"],
+                "input_hint": "otp",
+            }
+
+        # If no method found, go to selection
+        return await self._build_payment_selection_response(session)
 
     async def _build_payment_selection_response(self, session: Dict) -> Dict[str, Any]:
         """Build response for payment method selection."""
@@ -1148,6 +1274,12 @@ Would you like to proceed with payment?""",
             return await self._handle_checkout_details_stage(message, session)
         elif stage == ConversationStage.PAYMENT_SELECTION:
             return await self._handle_payment_selection_stage(message, session)
+        elif stage == ConversationStage.OTP_VERIFICATION:
+            return await self._handle_otp_verification_stage(message, session)
+        elif stage == ConversationStage.INTENT_SIGNING:
+            return await self._handle_intent_signing_stage(message, session)
+        elif stage == ConversationStage.COMPLETED:
+            return self._handle_post_completion(message, session)
         else:
             return await self._handle_greeting_stage(message, session)
 
@@ -1175,7 +1307,7 @@ Would you like to proceed with payment?""",
             return {
                 "success": True,
                 "type": "conversation",
-                "message": "Hello! 👋 Welcome to AP2 Travel Assistant!\n\nI'm here to help you plan your perfect trip. Where would you like to go?",
+                "message": "Hello! 👋 I'm **Voyager AI**, your personal travel agent powered by the AP2 protocol.\n\nTell me where you'd like to go and I'll handle everything — from planning to secure checkout.",
                 "suggestions": [
                     "I want to visit Dubai",
                     "Planning a trip to Tokyo",
@@ -1291,23 +1423,33 @@ Output JSON only:"""
 
         try:
             start_time = time.time()
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options={"num_predict": 400},
-            )
+            async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT) as client:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1
+                    }
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
             duration = time.time() - start_time
-            response_text = response["message"]["content"]
 
             log_llm_call(
-                logger, OLLAMA_MODEL, prompt[:200], response_text[:200], duration
+                logger, OPENROUTER_MODEL, prompt[:200], response_text[:200], duration
             )
 
             # Extract JSON - handle various LLM output formats
             json_text = response_text
 
-            # Remove qwen3 thinking tags if present
+            # Remove LLM thinking tags if present
             if "<think>" in json_text:
                 json_text = re.sub(
                     r"<think>.*?</think>", "", json_text, flags=re.DOTALL
@@ -1727,6 +1869,38 @@ Output JSON only:"""
                 }
                 dates_found = True
                 logger.info(f"[SimpleExtract] Found dates: weekend")
+
+        # Explicit date range patterns like "March 15-20"
+        if not dates_found:
+            explicit_match = re.search(
+                r"(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?\s*(?:-|to)\s*(?:\w+\s+)?(\d{1,2})(?:st|nd|rd|th)?",
+                msg_lower
+            )
+            if explicit_match:
+                month_str = explicit_match.group(1)
+                start_day = int(explicit_match.group(2))
+                end_day = int(explicit_match.group(3))
+
+                # very crude month to num mapping
+                m_map = {"january":1, "jan":1, "february":2, "feb":2, "march":3, "mar":3, "april":4, "apr":4, "may":5, "june":6, "jun":6, "july":7, "jul":7, "august":8, "aug":8, "september":9, "sep":9, "october":10, "oct":10, "november":11, "nov":11, "december":12, "dec":12}
+                month_num = m_map.get(month_str, today.month)
+
+                year = today.year
+                if month_num < today.month:
+                    year += 1
+
+                try:
+                    start_date = datetime(year, month_num, start_day)
+                    end_date = datetime(year, month_num, end_day) if end_day >= start_day else datetime(year, month_num + 1 if month_num < 12 else 1, end_day)
+
+                    result["travel_dates"] = {
+                        "start": start_date.strftime("%Y-%m-%d"),
+                        "end": end_date.strftime("%Y-%m-%d"),
+                    }
+                    dates_found = True
+                    logger.info(f"[SimpleExtract] Found dates: explicit range")
+                except ValueError:
+                    pass
 
         # Months dictionary
         months = {
@@ -2319,11 +2493,12 @@ How would you like to proceed with checkout?""",
             # This message should be the name
             checkout["name"] = message.strip()
             session["checkout_details"] = checkout
+            name_part = checkout['name'].split()[0].lower()
             return {
                 "success": True,
                 "type": "conversation",
                 "message": f"Thanks, **{checkout['name']}**! 📧 What's your email address?",
-                "suggestions": [],
+                "suggestions": [f"{name_part}@example.com", f"{name_part}.travels@email.com"],
                 "input_hint": "email",
                 "checkout_progress": {"name": checkout["name"]},
             }
@@ -2448,9 +2623,19 @@ Please select a payment method:""",
                 selected_method = payment_methods[0]
 
         if selected_method:
-            # Process payment
-            session["stage"] = ConversationStage.PROCESSING
-            return await self._process_full_checkout(session, selected_method)
+            # Store selected method and move to OTP flow
+            session["selected_payment_method"] = selected_method
+            session["stage"] = ConversationStage.OTP_VERIFICATION
+
+            return {
+                "success": True,
+                "type": "conversation",
+                "message": f"""You selected **{selected_method['network']} ••••{selected_method['last4']}**.
+
+To secure your transaction, an OTP has been sent to your registered device. Please enter the 6-digit OTP (use '123456' for demo):""",
+                "suggestions": ["123456"],
+                "input_hint": "otp",
+            }
 
         return {
             "success": True,
@@ -2461,6 +2646,85 @@ Please select a payment method:""",
                 f"Pay with {pm['network']} ****{pm['last4']}"
                 for pm in payment_methods[:3]
             ],
+        }
+
+    async def _handle_otp_verification_stage(
+        self, message: str, session: Dict
+    ) -> Dict[str, Any]:
+        """Handle the OTP entry for secure checkout."""
+        otp = message.strip()
+
+        # Hardcoded OTP check for demo purposes
+        if otp == "123456" or "123456" in otp:
+            session["stage"] = ConversationStage.PROCESSING
+
+            selected_method = session.get("selected_payment_method")
+            if not selected_method:
+                return {
+                    "success": False,
+                    "type": "error",
+                    "message": "Payment method information is missing. Please select payment method again.",
+                }
+
+            logger.info("OTP Verified. Agent proceeding with delegated access for Intent Mandate and Payment Processing.")
+
+            return await self._process_full_checkout(session, selected_method)
+        else:
+            return {
+                "success": True,
+                "type": "conversation",
+                "message": "Invalid OTP. Please try again (hint: use '123456'):",
+                "suggestions": ["123456"],
+                "input_hint": "otp",
+            }
+
+    async def _handle_intent_signing_stage(
+        self, message: str, session: Dict
+    ) -> Dict[str, Any]:
+        """Handle signing of the Intent Mandate."""
+        msg_lower = message.lower()
+
+        # Check for confirmation to sign
+        if any(
+            word in msg_lower
+            for word in [
+                "sign",
+                "yes",
+                "proceed",
+                "confirm",
+                "ok",
+                "agree",
+                "continue",
+                "complete",
+                "next",
+                "done",
+                "sure",
+                "go",
+                "correct",
+            ]
+        ):
+            # Automated Device Signing & Payment Processing
+            session["stage"] = ConversationStage.PROCESSING
+
+            # Get the stored payment method
+            selected_method = session.get("selected_payment_method")
+            if not selected_method:
+                return {
+                    "success": False,
+                    "type": "error",
+                    "message": "Payment method information is missing. Please select payment method again.",
+                }
+
+            # Add a message indicating agent action (this will likely be part of the final response or logs)
+            logger.info("Intent Mandate signed. Agent automatically signing with Device Key and processing payment.")
+
+            return await self._process_full_checkout(session, selected_method)
+
+        return {
+            "success": True,
+            "type": "intent_signing",
+            "message": "To proceed, please sign the Intent Mandate to confirm your trip details.",
+            "suggestions": ["✍️ Sign Intent Mandate"],
         }
 
     async def _process_full_checkout(
@@ -2612,6 +2876,8 @@ Your trip to **{session["collected_info"].get("destination", "your destination")
 
 Thank you for using AP2 Travel! Would you like to plan another trip?""",
                             "confirmation": confirmation,
+                            "selected_package": session.get("selected_package"),
+                            "intent_mandate": intent_mandate,
                             "mandates": {
                                 "intent": intent_mandate,
                                 "cart": cart_mandate.model_dump(),

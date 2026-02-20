@@ -26,7 +26,7 @@ A full-stack, production-grade Travel Agent Checkout Demo that combines **A2A (A
 │    │                  Shopping Agent (:8000)                          │     │
 │    │                 [User-Facing Orchestrator]                       │     │
 │    │                                                                  │     │
-│    │   • Chat Interface (Ollama qwen3:8b)                            │     │
+│    │   • Chat Interface (OpenRouter LLM)                             │     │
 │    │   • Session Management                                           │     │
 │    │   • IntentMandate Creation                                       │     │
 │    │   • Checkout Flow Coordination                                   │     │
@@ -66,11 +66,11 @@ A full-stack, production-grade Travel Agent Checkout Demo that combines **A2A (A
 ### Real-Time Debugging
 - **A2A Message Bus**: View all inter-agent communications
 - **Mandate Timeline**: Visual checkout progress
-- **Ollama LLM Calls**: Inspect AI reasoning
+- **LLM Calls**: Inspect AI reasoning
 - **Server Logs**: Live log streaming with filters
 
 ### LLM Integration
-- **Ollama with qwen3:8b**: Local LLM for travel intent extraction
+- **OpenRouter LLM**: Cloud-hosted LLM for travel intent extraction
 - **Graceful Fallback**: Mock responses when LLM unavailable
 - **Structured Output**: JSON schema-constrained generation
 
@@ -78,7 +78,7 @@ A full-stack, production-grade Travel Agent Checkout Demo that combines **A2A (A
 
 - **Python 3.10+**
 - **Node.js 18+**
-- **Ollama** (optional, for LLM features)
+- **OpenRouter API key** (for LLM features)
 - **macOS** or **Linux**
 
 ## Quick Start
@@ -97,18 +97,15 @@ cp .env.example .env
 chmod +x start.sh stop.sh
 ```
 
-### 2. Install Ollama (Optional)
+### 2. Configure OpenRouter
+
+Get an API key from [openrouter.ai](https://openrouter.ai/) and add it to your `.env`:
 
 ```bash
-# macOS
-brew install ollama
-
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Start Ollama and pull model
-ollama serve &
-ollama pull qwen3:8b
+# Edit .env and set your API key
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+OPENROUTER_MODEL=arcee-ai/trinity-large-preview:free
+OPENROUTER_TIMEOUT=60
 ```
 
 ### 3. Start All Services
@@ -226,7 +223,7 @@ ap2-travel-agent/
 Switch to "Debugger" tab to see:
 - **A2A Messages**: All JSON-RPC calls between agents
 - **Mandate Timeline**: Visual flow of VDCs
-- **LLM Calls**: Ollama prompts and responses
+- **LLM Calls**: OpenRouter prompts and responses
 - **Agent Cards**: Discovery metadata
 - **Server Logs**: Real-time log streaming
 
@@ -283,10 +280,10 @@ Example:
 ### Environment Variables
 
 ```bash
-# Ollama Configuration
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen3:8b
-OLLAMA_TIMEOUT=30
+# OpenRouter Configuration
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
+OPENROUTER_MODEL=arcee-ai/trinity-large-preview:free
+OPENROUTER_TIMEOUT=60
 
 # Agent Ports
 SHOPPING_AGENT_PORT=8000
@@ -362,19 +359,15 @@ Used for actual payment execution:
 
 ## Troubleshooting
 
-### Ollama Not Available
+### LLM Not Available
 
-The system uses mock responses when Ollama is unavailable. To enable LLM:
+The system uses mock responses when OpenRouter is unavailable. To enable LLM:
 
 ```bash
-# Check if Ollama is running
-curl http://localhost:11434/api/tags
+# Ensure your .env has a valid API key
+OPENROUTER_API_KEY=sk-or-v1-your-key-here
 
-# Start Ollama
-ollama serve
-
-# Pull required model
-ollama pull qwen3:8b
+# Get a free key at https://openrouter.ai/
 ```
 
 ### Port Already in Use
@@ -431,6 +424,6 @@ MIT License - See [LICENSE](LICENSE) for details
 ## Acknowledgments
 
 - [A2A Protocol](https://github.com/anthropics/a2a-protocol) - Agent-to-Agent communication
-- [Ollama](https://ollama.ai) - Local LLM inference
+- [OpenRouter](https://openrouter.ai) - LLM inference API
 - [FastAPI](https://fastapi.tiangolo.com) - Python web framework
 - [Vite](https://vitejs.dev) - Frontend build tool

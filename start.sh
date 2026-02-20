@@ -155,20 +155,20 @@ prompt_env_values() {
     echo -e "${CYAN}╚═══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
-    # Ollama Configuration
-    echo -e "${BLUE}── Ollama Configuration ──${NC}"
+    # OpenRouter Configuration
+    echo -e "${BLUE}── OpenRouter Configuration ──${NC}"
 
-    current_val=$(grep "^OLLAMA_BASE_URL=" "$temp_env" | cut -d'=' -f2-)
-    read -p "Ollama Base URL [$current_val]: " new_val
-    [ -n "$new_val" ] && sed -i.bak "s|^OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=$new_val|" "$temp_env"
+    current_val=$(grep "^OPENROUTER_API_KEY=" "$temp_env" | cut -d'=' -f2-)
+    read -p "OpenRouter API Key [${current_val:0:20}...]: " new_val
+    [ -n "$new_val" ] && sed -i.bak "s|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=$new_val|" "$temp_env"
 
-    current_val=$(grep "^OLLAMA_MODEL=" "$temp_env" | cut -d'=' -f2-)
-    read -p "Ollama Model [$current_val]: " new_val
-    [ -n "$new_val" ] && sed -i.bak "s|^OLLAMA_MODEL=.*|OLLAMA_MODEL=$new_val|" "$temp_env"
+    current_val=$(grep "^OPENROUTER_MODEL=" "$temp_env" | cut -d'=' -f2-)
+    read -p "OpenRouter Model [$current_val]: " new_val
+    [ -n "$new_val" ] && sed -i.bak "s|^OPENROUTER_MODEL=.*|OPENROUTER_MODEL=$new_val|" "$temp_env"
 
-    current_val=$(grep "^OLLAMA_TIMEOUT=" "$temp_env" | cut -d'=' -f2-)
-    read -p "Ollama Timeout (seconds) [$current_val]: " new_val
-    [ -n "$new_val" ] && sed -i.bak "s|^OLLAMA_TIMEOUT=.*|OLLAMA_TIMEOUT=$new_val|" "$temp_env"
+    current_val=$(grep "^OPENROUTER_TIMEOUT=" "$temp_env" | cut -d'=' -f2-)
+    read -p "OpenRouter Timeout (seconds) [$current_val]: " new_val
+    [ -n "$new_val" ] && sed -i.bak "s|^OPENROUTER_TIMEOUT=.*|OPENROUTER_TIMEOUT=$new_val|" "$temp_env"
 
     # Server Ports
     echo ""
@@ -275,7 +275,6 @@ MISSING_DEPS=0
 check_command python3 || MISSING_DEPS=1
 check_command node || MISSING_DEPS=1
 check_command npm || MISSING_DEPS=1
-check_command ollama || echo -e "${YELLOW}⚠ ollama not found - will use mock responses${NC}"
 
 if [ $MISSING_DEPS -eq 1 ]; then
     echo -e "${RED}Please install missing dependencies and try again.${NC}"
@@ -290,38 +289,20 @@ echo -e "${GREEN}✓ Python $PYTHON_VERSION${NC}"
 NODE_VERSION=$(node --version)
 echo -e "${GREEN}✓ Node $NODE_VERSION${NC}"
 
-# Check if Ollama is running
-echo -e "\n${BLUE}[2/6] Checking Ollama service...${NC}"
-if command -v ollama &> /dev/null; then
-    if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ Ollama is running${NC}"
-
-        # Check for qwen3:8b model
-        if ollama list 2>/dev/null | grep -q "qwen3:8b"; then
-            echo -e "${GREEN}✓ qwen3:8b model is available${NC}"
-        else
-            echo -e "${YELLOW}⚠ qwen3:8b model not found - pulling...${NC}"
-            ollama pull qwen3:8b || echo -e "${YELLOW}⚠ Failed to pull model - will use mock responses${NC}"
-        fi
+# Check OpenRouter API key
+echo -e "\n${BLUE}[2/6] Checking OpenRouter configuration...${NC}"
+if grep -q "^OPENROUTER_API_KEY=" "$SCRIPT_DIR/.env" 2>/dev/null; then
+    API_KEY=$(grep "^OPENROUTER_API_KEY=" "$SCRIPT_DIR/.env" | cut -d'=' -f2-)
+    if [ -n "$API_KEY" ] && [ "$API_KEY" != "your_openrouter_api_key_here" ]; then
+        echo -e "${GREEN}✓ OpenRouter API key configured${NC}"
+        MODEL=$(grep "^OPENROUTER_MODEL=" "$SCRIPT_DIR/.env" | cut -d'=' -f2-)
+        echo -e "${GREEN}✓ Model: ${MODEL:-arcee-ai/trinity-large-preview:free}${NC}"
     else
-        echo -e "${YELLOW}⚠ Ollama is not running - starting...${NC}"
-        ollama serve &> "$LOG_DIR/ollama.log" &
-        sleep 3
-
-        if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-            echo -e "${GREEN}✓ Ollama started${NC}"
-
-            # Pull model if not available
-            if ! ollama list 2>/dev/null | grep -q "qwen3:8b"; then
-                echo -e "${YELLOW}⚠ Pulling qwen3:8b model...${NC}"
-                ollama pull qwen3:8b || true
-            fi
-        else
-            echo -e "${YELLOW}⚠ Could not start Ollama - will use mock responses${NC}"
-        fi
+        echo -e "${YELLOW}⚠ OpenRouter API key not set - will use mock responses${NC}"
+        echo -e "${YELLOW}  Set OPENROUTER_API_KEY in .env to enable LLM features${NC}"
     fi
 else
-    echo -e "${YELLOW}⚠ Ollama not installed - will use mock responses${NC}"
+    echo -e "${YELLOW}⚠ No .env file found - will use mock responses${NC}"
 fi
 
 # Install Python dependencies
