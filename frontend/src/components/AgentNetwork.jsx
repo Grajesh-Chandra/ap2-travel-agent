@@ -15,7 +15,7 @@ const AGENTS = [
       protocol: 'A2A + AP2',
       features: ['LLM-powered chat', 'Session management', 'Intent extraction', 'Multi-agent coordination'],
       endpoints: ['/api/chat', '/a2a'],
-      tech: 'FastAPI + Ollama qwen3:8b'
+      tech: 'FastAPI + OpenRouter LLM'
     }
   },
   {

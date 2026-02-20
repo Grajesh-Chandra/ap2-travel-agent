@@ -12,6 +12,11 @@ import {
   CheckCircle2,
   Sparkles,
   ShoppingCart,
+  Shield,
+  CreditCard,
+  FileCheck,
+  RotateCcw,
+  Star,
 } from 'lucide-react'
 import AgentNetwork from './AgentNetwork'
 
@@ -28,6 +33,24 @@ export default function TravelPlanner({
   const [sessionData, setSessionData] = useState(null)
   const [selectedPackageId, setSelectedPackageId] = useState(null)
   const chatEndRef = useRef(null)
+
+  const handleResetSession = async () => {
+    try {
+      await fetch(`${API_BASE}/api/reset-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionData?.session_id }),
+      })
+    } catch (e) {
+      // ignore
+    }
+    setChatHistory([])
+    setSessionData(null)
+    setSelectedPackageId(null)
+    setMessage('')
+    onSessionUpdate?.(null)
+    onSelectedPackage?.(null)
+  }
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -122,12 +145,18 @@ export default function TravelPlanner({
     }, 100)
   }
 
+  const sendSuggestion = (text) => {
+    setMessage(text)
+    setTimeout(() => {
+      document.querySelector('form')?.requestSubmit()
+    }, 100)
+  }
+
   const handleProceedToCheckout = () => {
-    // Legacy: kept for compatibility, but checkout now happens through chat
     if (sessionData && selectedPackageId) {
-      const pkg = sessionData.packages.find(
+      const pkg = sessionData.packages?.find(
         (p) => p.package_id === selectedPackageId
-      )
+      ) || sessionData.selected_package
       onProceedToCheckout(sessionData, pkg)
     }
   }
@@ -180,7 +209,7 @@ export default function TravelPlanner({
                 {quickPrompts.map((prompt, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setMessage(prompt)}
+                    onClick={() => sendSuggestion(prompt)}
                     className="group text-left text-sm p-4 rounded-xl bg-white/[0.03] hover:bg-white/[0.06]
                              border border-white/10 hover:border-gold/40 transition-all duration-300
                              hover:shadow-lg hover:shadow-gold/5"
@@ -215,15 +244,18 @@ export default function TravelPlanner({
                   ) : msg.type === 'conversation' || msg.type === 'confirmation' ? (
                     <ConversationResponse
                       data={msg.content}
-                      onSuggestionClick={(suggestion) => setMessage(suggestion)}
+                      onSuggestionClick={sendSuggestion}
                     />
                   ) : msg.type === 'checkout_start' || msg.type === 'payment_selection' ? (
                     <CheckoutResponse
                       data={msg.content}
-                      onSuggestionClick={(suggestion) => setMessage(suggestion)}
+                      onSuggestionClick={sendSuggestion}
                     />
                   ) : msg.type === 'payment_complete' ? (
-                    <PaymentCompleteResponse data={msg.content} />
+                    <PaymentCompleteResponse
+                      data={msg.content}
+                      onSuggestionClick={sendSuggestion}
+                    />
                   ) : (
                     <div className="max-w-[80%] message-bubble-agent">
                       <p className={msg.type === 'error' ? 'text-red-400' : 'text-gray-200'}>
@@ -279,14 +311,26 @@ export default function TravelPlanner({
           </button>
         </form>
 
-        {/* Stage indicator */}
-        {sessionData?.stage && (
-          <div className="flex justify-center">
+        {/* Stage indicator + Reset */}
+        <div className="flex items-center justify-center gap-3">
+          {sessionData?.stage && (
             <span className="badge badge-gold text-xs">
               {sessionData.stage.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
             </span>
-          </div>
-        )}
+          )}
+          {sessionData && (
+            <button
+              onClick={handleResetSession}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                       text-gray-400 hover:text-white bg-white/[0.03] hover:bg-red-500/15
+                       border border-white/10 hover:border-red-500/40 transition-all duration-300"
+              title="Reset session and start fresh"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Reset Session
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Right Panel - Agent Network */}
@@ -309,8 +353,8 @@ function ConversationResponse({ data, onSuggestionClick }) {
             const parts = line.split(/(\*\*.*?\*\*)/g)
             const isEmpty = line.trim() === ''
             return (
-              <p 
-                key={i} 
+              <p
+                key={i}
                 className={`${line.startsWith('-') ? 'ml-4 before:content-["•"] before:mr-2 before:text-gold' : ''} ${i > 0 && !isEmpty ? 'mt-2' : ''} ${isEmpty ? 'h-2' : ''}`}
               >
                 {parts.map((part, j) =>
@@ -578,8 +622,8 @@ function CheckoutResponse({ data, onSuggestionClick }) {
             const parts = line.split(/(\*\*.*?\*\*)/g)
             const isEmpty = line.trim() === ''
             return (
-              <p 
-                key={i} 
+              <p
+                key={i}
                 className={`${line.startsWith('-') ? 'ml-4 before:content-["•"] before:mr-2 before:text-gold' : ''} ${i > 0 && !isEmpty ? 'mt-2' : ''} ${isEmpty ? 'h-2' : ''}`}
               >
                 {parts.map((part, j) =>
@@ -665,85 +709,175 @@ function CheckoutResponse({ data, onSuggestionClick }) {
 }
 
 // Payment Complete Response Component
-function PaymentCompleteResponse({ data }) {
+function PaymentCompleteResponse({ data, onSuggestionClick }) {
+  const pkg = data.selected_package || {}
+  const mandates = data.mandates || {}
+  const confirmation = data.confirmation || {}
+  const flight = pkg.flights?.[0]
+  const hotel = pkg.hotels?.[0]
+
   return (
-    <div className="max-w-[95%]">
-      <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/20 via-emerald-500/10 to-gold/10 rounded-2xl rounded-tl-sm p-8 border border-emerald-500/40">
-        {/* Decorative background */}
+    <div className="w-full space-y-4">
+      {/* Success Header */}
+      <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/20 via-emerald-500/10 to-gold/10 rounded-2xl rounded-tl-sm p-6 border border-emerald-500/40">
         <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
         <div className="absolute bottom-0 left-0 w-24 h-24 bg-gold/10 rounded-full blur-2xl"></div>
 
-        {/* Success Icon */}
-        <div className="relative flex items-center justify-center mb-6">
-          <div className="w-20 h-20 rounded-2xl bg-emerald-500/20 flex items-center justify-center shadow-lg shadow-emerald-500/10">
-            <CheckCircle2 className="w-12 h-12 text-emerald-400" />
+        <div className="relative flex items-center gap-4 mb-4">
+          <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 flex items-center justify-center shadow-lg shadow-emerald-500/10">
+            <CheckCircle2 className="w-8 h-8 text-emerald-400" />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-white">Booking Confirmed!</h3>
+            <p className="text-sm text-gray-400">Your trip is all set — AP2 secured</p>
+          </div>
+          <span className="ml-auto badge badge-success text-xs">✓ AP2 Verified</span>
+        </div>
+
+        {/* Confirmation Card */}
+        <div className="relative bg-black/40 rounded-xl p-5 border border-white/10 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-gray-400 text-xs font-medium uppercase tracking-wider">Confirmation Number</p>
+            <span className="text-gold text-xs font-mono">{pkg.tier?.toUpperCase() || 'STANDARD'} PACKAGE</span>
+          </div>
+          <p className="text-2xl font-mono font-bold text-gold tracking-wider">
+            {confirmation.confirmation_number || 'N/A'}
+          </p>
+          <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between">
+            <p className="text-emerald-400 font-semibold text-lg">
+              ${confirmation.amount_charged?.toLocaleString(undefined, {minimumFractionDigits: 2}) || pkg.total_usd?.toLocaleString()}
+              <span className="text-gray-500 text-sm font-normal ml-1">USD charged</span>
+            </p>
+            <span className="text-xs text-gray-500">via AP2 Payment Agent</span>
           </div>
         </div>
 
-        {/* Message */}
-        <div className="relative text-center mb-8">
-          <h3 className="text-2xl font-bold text-white mb-3">Booking Confirmed!</h3>
-          <p className="text-gray-300 leading-relaxed max-w-md mx-auto whitespace-pre-wrap">
-            {data.message?.split('\n').map((line, i) => {
-              const isEmpty = line.trim() === ''
-              if (isEmpty) return <span key={i} className="block h-2" />
-              if (line.includes('`')) {
-                // Handle code/monospace text
-                const parts = line.split(/(`[^`]+`)/g)
-                return (
-                  <span key={i} className="block mt-2">
-                    {parts.map((part, j) =>
-                      part.startsWith('`') && part.endsWith('`') ? (
-                        <code key={j} className="text-xs bg-white/10 px-2 py-1 rounded-md text-gold font-mono">
-                          {part.slice(1, -1)}
-                        </code>
-                      ) : part.startsWith('**') && part.endsWith('**') ? (
-                        <strong key={j} className="text-white font-semibold">{part.slice(2, -2)}</strong>
-                      ) : (
-                        <span key={j}>{part}</span>
-                      )
-                    )}
-                  </span>
-                )
-              }
-              const parts = line.split(/(\*\*.*?\*\*)/g)
-              return (
-                <span key={i} className="block mt-2">
-                  {parts.map((part, j) =>
-                    part.startsWith('**') && part.endsWith('**') ? (
-                      <strong key={j} className="text-white font-semibold">{part.slice(2, -2)}</strong>
-                    ) : (
-                      <span key={j}>{part}</span>
-                    )
-                  )}
-                </span>
-              )
-            })}
-          </p>
-        </div>
-
-        {/* Confirmation Details */}
-        {data.confirmation && (
-          <div className="relative bg-black/40 rounded-xl p-6 text-center border border-white/10">
-            <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">Confirmation Number</p>
-            <p className="text-3xl font-mono font-bold text-gold mt-2 tracking-wider">
-              {data.confirmation.confirmation_number}
-            </p>
-            <div className="mt-4 pt-4 border-t border-white/10">
-              <p className="text-emerald-400 font-semibold text-lg">
-                ${data.confirmation.amount_charged?.toLocaleString(undefined, {minimumFractionDigits: 2})} charged
+        {/* Trip Details Grid */}
+        <div className="relative grid grid-cols-2 gap-3">
+          {flight && (
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5">
+              <div className="w-9 h-9 rounded-lg bg-sky-500/10 flex items-center justify-center">
+                <Plane className="w-4 h-4 text-sky-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-sm font-medium truncate">{flight.airline}</p>
+                <p className="text-xs text-gray-500">${flight.price_per_person_usd}/person</p>
+              </div>
+            </div>
+          )}
+          {hotel && (
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5">
+              <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                <Building className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-white text-sm font-medium truncate">{hotel.name}</p>
+                <p className="text-xs text-gray-500">
+                  <span className="text-yellow-400">{'★'.repeat(hotel.star_rating || 4)}</span>
+                  {' '}{hotel.nights || ''} nights
+                </p>
+              </div>
+            </div>
+          )}
+          {pkg.activities?.length > 0 && (
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5">
+              <div className="w-9 h-9 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                <Star className="w-4 h-4 text-violet-400" />
+              </div>
+              <div>
+                <p className="text-white text-sm font-medium">{pkg.activities.length} Activities</p>
+                <p className="text-xs text-gray-500">Included in package</p>
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5">
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+              <CreditCard className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-white text-sm font-medium">
+                {confirmation.payment_method?.network || 'Card'} ••••{confirmation.payment_method?.last4 || '****'}
               </p>
+              <p className="text-xs text-gray-500">Payment method</p>
             </div>
           </div>
-        )}
-
-        {/* AP2 Badge */}
-        <div className="relative mt-6 flex items-center justify-center">
-          <span className="badge badge-success text-sm px-4 py-2">
-            ✓ Secured by AP2 Verifiable Payment
-          </span>
         </div>
       </div>
+
+      {/* AP2 Mandate Chain */}
+      {mandates.intent && (
+        <div className="card p-4 border border-white/10">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="w-4 h-4 text-gold" />
+            <h4 className="text-sm font-semibold text-white">AP2 Mandate Chain</h4>
+            <span className="badge badge-gold text-[10px] ml-auto">3 of 3 verified</span>
+          </div>
+          <div className="space-y-2">
+            {/* Intent Mandate */}
+            <div className="flex items-center gap-3 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+              <div className="w-7 h-7 rounded-md bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-emerald-400">Intent Mandate</p>
+                <p className="text-[10px] text-gray-500 font-mono truncate">
+                  {mandates.intent?.mandate_id || 'N/A'}
+                </p>
+              </div>
+              <FileCheck className="w-3.5 h-3.5 text-emerald-500/50" />
+            </div>
+            {/* Cart Mandate */}
+            <div className="flex items-center gap-3 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+              <div className="w-7 h-7 rounded-md bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-emerald-400">Cart Mandate</p>
+                <p className="text-[10px] text-gray-500 font-mono truncate">
+                  {mandates.cart?.mandate_id || 'N/A'}
+                </p>
+              </div>
+              <FileCheck className="w-3.5 h-3.5 text-emerald-500/50" />
+            </div>
+            {/* Payment Mandate */}
+            <div className="flex items-center gap-3 p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+              <div className="w-7 h-7 rounded-md bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-emerald-400">Payment Mandate</p>
+                <p className="text-[10px] text-gray-500 font-mono truncate">
+                  {mandates.payment?.mandate_id || 'N/A'}
+                </p>
+              </div>
+              <FileCheck className="w-3.5 h-3.5 text-emerald-500/50" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Next Journey Suggestions */}
+      {data.suggestions && data.suggestions.length > 0 && onSuggestionClick && (
+        <div className="glass-elevated rounded-2xl px-5 py-4">
+          <p className="text-xs text-gray-500 font-medium uppercase tracking-wider mb-3">What's Next?</p>
+          <div className="space-y-2">
+            {data.suggestions.map((suggestion, idx) => (
+              <button
+                key={idx}
+                onClick={() => onSuggestionClick(suggestion)}
+                className="group w-full text-left text-sm p-3 rounded-xl bg-white/[0.03] hover:bg-gold/10
+                         border border-white/10 hover:border-gold/40 transition-all duration-300
+                         flex items-center gap-3"
+              >
+                <div className="w-8 h-8 rounded-lg bg-gold/10 flex items-center justify-center shrink-0 group-hover:bg-gold/20 transition-colors">
+                  <Sparkles className="w-4 h-4 text-gold" />
+                </div>
+                <span className="text-gray-300 group-hover:text-white transition-colors">{suggestion}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

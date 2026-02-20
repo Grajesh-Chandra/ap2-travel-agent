@@ -247,7 +247,7 @@ def log_llm_call(
     tokens_in: Optional[int] = None,
     tokens_out: Optional[int] = None,
 ):
-    """Log an LLM (Ollama) call."""
+    """Log an LLM call (OpenRouter)."""
     logger.info(
         f"LLM Call [{model}] - {duration_seconds:.2f}s",
         extra={

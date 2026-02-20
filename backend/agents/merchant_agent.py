@@ -9,15 +9,16 @@ import uuid
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
-import ollama
+import httpx
 
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import (
-    OLLAMA_MODEL,
-    OLLAMA_TIMEOUT,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+    OPENROUTER_TIMEOUT,
     MERCHANT_ID,
     MERCHANT_NAME,
     MERCHANT_AGENT_URL,
@@ -240,18 +241,28 @@ Return ONLY the JSON object starting with {{ - no thinking, no explanation, no m
         try:
             start_time = time.time()
 
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": "/no_think\n" + prompt}],
-                options={"num_predict": 2000, "temperature": 0.3}
-            )
+            async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT) as client:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": "/no_think\n" + prompt}],
+                        "temperature": 0.3
+                    }
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
             duration = time.time() - start_time
-            response_text = response["message"]["content"]
 
             log_llm_call(
                 logger,
-                model=OLLAMA_MODEL,
+                model=OPENROUTER_MODEL,
                 prompt_preview=prompt[:300],
                 response_preview=response_text[:300],
                 duration_seconds=duration
@@ -260,7 +271,7 @@ Return ONLY the JSON object starting with {{ - no thinking, no explanation, no m
             # Extract JSON from response
             json_text = response_text
 
-            # Remove thinking tags if present (qwen3 sometimes adds these)
+            # Remove thinking tags if present (some LLMs add these)
             if "<think>" in json_text:
                 # Extract content after </think>
                 think_end = json_text.find("</think>")
@@ -352,13 +363,22 @@ Return ONLY this JSON structure, no other text:
 ]}}"""
 
         try:
-            response = ollama.chat(
-                model=OLLAMA_MODEL,
-                messages=[{"role": "user", "content": "/no_think\n" + prompt}],
-                options={"num_predict": 2000, "temperature": 0.1}
-            )
-
-            response_text = response["message"]["content"]
+            async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT) as client:
+                resp = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": OPENROUTER_MODEL,
+                        "messages": [{"role": "user", "content": "/no_think\n" + prompt}],
+                        "temperature": 0.1
+                    }
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                response_text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
             # Extract JSON same as main method
             json_text = response_text

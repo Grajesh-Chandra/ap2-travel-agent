@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plane, ShoppingCart, Search, Rocket } from 'lucide-react'
+import { Plane, Shield, Search, Rocket } from 'lucide-react'
 import TravelPlanner from './components/TravelPlanner'
 import CheckoutFlow from './components/CheckoutFlow'
 import AP2Debugger from './components/AP2Debugger'
@@ -22,7 +22,7 @@ function App() {
 
   const tabs = [
     { id: 'planner', label: 'Travel Planner', icon: Plane },
-    { id: 'checkout', label: 'Checkout & AP2', icon: ShoppingCart },
+    { id: 'checkout', label: 'AP2 Audit Trail', icon: Shield },
     { id: 'debugger', label: 'Protocol Debugger', icon: Search },
   ]
 
@@ -72,31 +72,33 @@ function App() {
             <div className="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06]">
               <div className="status-online" />
               <div className="text-sm">
-                <span className="text-gray-300 font-medium">qwen3:8b</span>
-                <span className="text-gray-500 ml-1.5 text-xs">via Ollama</span>
+                <span className="text-gray-300 font-medium">OpenRouter</span>
+                <span className="text-gray-500 ml-1.5 text-xs">LLM</span>
               </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content - all tabs stay mounted to preserve state */}
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {activeTab === 'planner' && (
+        <div style={{ display: activeTab === 'planner' ? 'block' : 'none' }}>
           <TravelPlanner
             onProceedToCheckout={handleProceedToCheckout}
             onSessionUpdate={setSessionData}
             onSelectedPackage={setSelectedPackage}
           />
-        )}
-        {activeTab === 'checkout' && (
+        </div>
+        <div style={{ display: activeTab === 'checkout' ? 'block' : 'none' }}>
           <CheckoutFlow
             sessionData={sessionData}
             selectedPackage={selectedPackage}
             onComplete={handleCheckoutComplete}
           />
-        )}
-        {activeTab === 'debugger' && <AP2Debugger />}
+        </div>
+        <div style={{ display: activeTab === 'debugger' ? 'block' : 'none' }}>
+          <AP2Debugger />
+        </div>
       </main>
 
       {/* Footer */}

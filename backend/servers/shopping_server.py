@@ -252,6 +252,20 @@ async def get_session(session_id: str):
     return session
 
 
+@app.post("/api/reset-session")
+async def reset_session(request: Request):
+    """
+    Reset/clear the current session to start fresh.
+    """
+    body = await request.json()
+    session_id = body.get("session_id")
+    if session_id:
+        result = shopping_agent.reset_session(session_id)
+    else:
+        result = {"success": True, "message": "No session to reset."}
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════
 # Log Streaming Endpoints
 # ═══════════════════════════════════════════════════════════════

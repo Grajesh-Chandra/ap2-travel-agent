@@ -18,10 +18,32 @@ import {
 const TABS = [
   { id: 'messages', label: 'A2A Message Bus', icon: MessageSquare },
   { id: 'timeline', label: 'Mandate Timeline', icon: Clock },
-  { id: 'llm', label: 'Ollama LLM Calls', icon: Brain },
+  { id: 'llm', label: 'LLM Calls', icon: Brain },
   { id: 'cards', label: 'Agent Cards', icon: CreditCard },
   { id: 'logs', label: 'Server Logs', icon: Server },
 ]
+
+/**
+ * Normalize any agent name variant to a consistent display name.
+ * Handles: "voyager_shopping_agent", "shopping_agent", "ShoppingAgent", "shopping"
+ */
+function normalizeAgentName(raw) {
+  if (!raw) return 'Unknown'
+  const AGENT_MAP = {
+    shopping: 'Shopping Agent',
+    merchant: 'Merchant Agent',
+    credentials: 'Credentials Agent',
+    payment: 'Payment Agent',
+  }
+  // Strip common prefixes/suffixes and convert to lowercase key
+  const key = raw
+    .replace(/^voyager_/, '')
+    .replace(/_agent$/i, '')
+    .replace(/Agent$/i, '')
+    .replace(/_/g, '')
+    .toLowerCase()
+  return AGENT_MAP[key] || raw
+}
 
 export default function AP2Debugger() {
   const [activeTab, setActiveTab] = useState('messages')
@@ -54,44 +76,42 @@ export default function AP2Debugger() {
           // Extract A2A messages - look for various A2A-related patterns
           const originalMsg = log.message || ''
           const msg = originalMsg.toLowerCase()
-          
+
           // Check for A2A message patterns
           const isA2ASent = originalMsg.includes('A2A SENT:')
           const isA2AReceived = originalMsg.includes('A2A RECEIVED:')
-          
+
           if (isA2ASent || isA2AReceived) {
             // Parse the message format: "A2A SENT: from_agent → to_agent [method]"
             // or "A2A RECEIVED: from_agent → to_agent [method]"
-            
+
             let direction, fromAgent, toAgent, method
-            
+
             // Extract method from brackets [method]
             const methodMatch = originalMsg.match(/\[([^\]]+)\]/)
             method = methodMatch ? methodMatch[1] : 'message'
-            
+
             // Parse agents from the arrow format: "from_agent → to_agent"
             const arrowMatch = originalMsg.match(/([\w_]+)\s*→\s*([\w_]+)/)
-            
+
             if (arrowMatch) {
               const parsedFrom = arrowMatch[1]
               const parsedTo = arrowMatch[2]
-              
+
               if (isA2ASent) {
-                // SENT: shopping_agent is sending TO another agent
                 direction = 'outgoing'
-                fromAgent = log.agent || parsedFrom
-                toAgent = parsedTo.replace('_agent', '')
+                fromAgent = normalizeAgentName(log.agent || parsedFrom)
+                toAgent = normalizeAgentName(parsedTo)
               } else {
-                // RECEIVED: shopping_agent is receiving FROM another agent
                 direction = 'incoming'
-                fromAgent = parsedFrom.replace('_agent', '')
-                toAgent = log.agent || parsedTo
+                fromAgent = normalizeAgentName(parsedFrom)
+                toAgent = normalizeAgentName(log.agent || parsedTo)
               }
             } else {
               // Fallback parsing
               direction = isA2ASent ? 'outgoing' : 'incoming'
-              fromAgent = log.agent || 'shopping'
-              toAgent = 'unknown'
+              fromAgent = normalizeAgentName(log.agent || 'shopping')
+              toAgent = 'Unknown'
             }
 
             // Get payload from extra fields if available
@@ -454,7 +474,7 @@ function LLMCallsView({ logs }) {
   const llmLogs = logs.filter(
     (log) =>
       log.event_type === 'llm_call' ||
-      log.message?.toLowerCase().includes('ollama') ||
+      log.message?.toLowerCase().includes('openrouter') ||
       log.message?.toLowerCase().includes('llm')
   )
 
@@ -474,7 +494,7 @@ function LLMCallsView({ logs }) {
             <div className="flex items-center gap-3 mb-3">
               <Brain className="w-5 h-5 text-gold" />
               <span className="text-white font-medium">
-                Ollama / qwen3:8b
+                OpenRouter LLM
               </span>
               <span className="text-gray-500 text-xs font-mono">
                 {new Date(log.timestamp).toLocaleTimeString()}
