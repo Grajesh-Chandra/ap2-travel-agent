@@ -230,8 +230,8 @@ export default function TravelPlanner({
                   }`}
                 >
                   {msg.role === 'user' ? (
-                    <div className="max-w-[80%] message-bubble-user shadow-lg">
-                      <p className="font-medium">{msg.content}</p>
+                    <div className="max-w-[80%] message-bubble-user shadow-lg shadow-gold/10">
+                      <p className="font-medium text-sm leading-relaxed">{msg.content}</p>
                     </div>
                   ) : msg.type === 'packages' ? (
                     <TravelResponse
