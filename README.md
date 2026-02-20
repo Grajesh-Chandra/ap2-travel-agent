@@ -1,5 +1,7 @@
 # AP2 Travel Agent Demo
 
+![AP2 Travel Agent Banner](assets/banner.png)
+
 A full-stack, production-grade Travel Agent Checkout Demo that combines **A2A (Agent-to-Agent)** protocol with **AP2 (Agent Payments Protocol)** for secure, transparent multi-agent commerce.
 
 ```
@@ -186,6 +188,8 @@ ap2-travel-agent/
 ```
 
 ## Demo Script
+
+![Demo App Screenshot](assets/demo_screenshot.png)
 
 ### Step 1: Plan Your Trip
 
